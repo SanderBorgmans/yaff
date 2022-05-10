@@ -28,15 +28,13 @@ from __future__ import division
 
 import numpy as np
 
-from yaff.log import log
-from yaff.log import timer
 from yaff.sampling.dof import CartesianDOF, StrainCellDOF
 
 
 __all__ = ['estimate_hessian', 'estimate_cart_hessian', 'estimate_elastic']
 
 
-def estimate_hessian(dof, eps=1e-4):
+def estimate_hessian(dof, eps=1e-4,log=None,timer=None):
     """Estimate the Hessian using the symmetric finite difference approximation.
 
        **Arguments:**
@@ -48,7 +46,19 @@ def estimate_hessian(dof, eps=1e-4):
 
        eps
             The magnitude of the displacements
+                
+       log 
+            A Screenlog object can be passed locally
+            if None, the log of dof.ff is used
+            
+       timer
+            A TimerGroup object can be passed locally
+            if None, the  timer of dof.ff is used
     """
+    if log is None:
+        log=dof.ff.log
+    if timer is None:
+        timer=dof.ff.timer
     with log.section('HESS'), timer.section('Hessian'):
         # Loop over all displacements
         if log.do_medium:
@@ -76,7 +86,7 @@ def estimate_hessian(dof, eps=1e-4):
         return 0.5*(rows + rows.T)
 
 
-def estimate_cart_hessian(ff, eps=1e-4, select=None):
+def estimate_cart_hessian(ff, eps=1e-4, select=None,log=None,timer=None):
     """Estimate the Cartesian Hessian with symmetric finite differences.
 
        **Arguments:**
@@ -92,12 +102,20 @@ def estimate_cart_hessian(ff, eps=1e-4, select=None):
        select
             A selection of atoms for which the hessian must be computed. If not
             given, the entire hessian is computed.
+        
+       log 
+            A Screenlog object can be passed locally
+            if None, the log of ff is used
+        
+       timer
+            A TimerGroup object can be passed locally
+            if None, the  timer of ff is used
     """
     dof = CartesianDOF(ff, select=select)
-    return estimate_hessian(dof, eps)
+    return estimate_hessian(dof, eps,log=log,timer=timer)
 
 
-def estimate_elastic(ff, eps=1e-4, do_frozen=False, ridge=1e-4):
+def estimate_elastic(ff, eps=1e-4, do_frozen=False, ridge=1e-4,log=None,timer=None):
     """Estimate the elastic constants using the symmetric finite difference
        approximation.
 
@@ -121,6 +139,14 @@ def estimate_elastic(ff, eps=1e-4, do_frozen=False, ridge=1e-4):
        ridge
             Threshold for the eigenvalues of the Cartesian Hessian. This only
             matters if ``do_frozen==False``.
+                
+       log 
+            A Screenlog object can be passed locally
+            if None, the log of ff is used
+            
+       timer
+            A TimerGroup object can be passed locally
+            if None, the  timer of ff is used
 
        The elastic constants are second order derivatives of the strain energy
        density with respect to uniform deformations. At the molecular scale,
@@ -172,9 +198,9 @@ def estimate_elastic(ff, eps=1e-4, do_frozen=False, ridge=1e-4):
     dof = StrainCellDOF(ff, do_frozen=do_frozen)
     vol0 = cell.volume
     if do_frozen:
-        return estimate_hessian(dof, eps)/vol0
+        return estimate_hessian(dof, eps,log=log,timer=timer)/vol0
     else:
-        hessian = estimate_hessian(dof, eps)/vol0
+        hessian = estimate_hessian(dof, eps,log=log,timer=timer)/vol0
         # Do a VSA-like trick...
         i = (cell.nvec*(cell.nvec+1))//2
         h11 = hessian[:i, :i]

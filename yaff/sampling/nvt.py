@@ -30,7 +30,6 @@ import numpy as np
 
 from molmod import boltzmann, femtosecond
 
-from yaff.log import log
 from yaff.sampling.iterative import Iterative, StateItem
 from yaff.sampling.utils import get_random_vel, clean_momenta, \
     get_ndof_internal_md, stabilized_cholesky_decomp

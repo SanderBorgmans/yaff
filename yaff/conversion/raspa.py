@@ -32,7 +32,6 @@ import os
 from yaff.system import System
 from yaff.pes.ff import ForceField
 from yaff.pes.eos import PREOS
-from yaff.log import log
 from yaff.external.lammpsio import get_lammps_ffatypes
 
 from molmod.units import kcalmol, angstrom, kelvin, amu, pascal, deg
@@ -42,7 +41,7 @@ from molmod.periodic import periodic
 __all__ = ['write_raspa_input','read_raspa_loading']
 
 def write_raspa_input(guests, parameters, host=None, workdir='.',
-        guestdata=None, hostname='host'):
+        guestdata=None, hostname='host',log=None):
     """
        Prepare input files that can be used to run RASPA simulations. Only a
        small subset of the full capabilities of RASPA can be explored.
@@ -78,6 +77,9 @@ def write_raspa_input(guests, parameters, host=None, workdir='.',
             case, the parameters Tc, Pc, and omega will be loaded from a data
             file based on the name. Otherwise, these will be left blank in the
             input file.
+       log 
+            A Screenlog object can be passed locally
+            if None, the global log is used
     """
     # Load the guest Systems
     guests = [System.from_file(guest) if isinstance(guest, str) else guest
@@ -102,13 +104,13 @@ def write_raspa_input(guests, parameters, host=None, workdir='.',
     # Write the force-field parameters
     write_raspa_forcefield(ff, workdir)
     # Write masses and charges of all atoms
-    ffatypes, ffatype_ids = write_pseudo_atoms(ff, workdir)
+    ffatypes, ffatype_ids = write_pseudo_atoms(ff, workdir,log=log)
     # Write the guest information
     if host==None: counter = 0
     else: counter = host.natom
     for iguest, (guest, data) in enumerate(zip(guests, guestdata)):
         write_guest(guest, data, workdir,
-         [ffatypes[iffa] for iffa in ffatype_ids[counter:counter+guest.natom]])
+         [ffatypes[iffa] for iffa in ffatype_ids[counter:counter+guest.natom]],log=log)
         counter += guest.natom
     # Write the host coordinates to a cif file
     if host is not None:
@@ -210,7 +212,7 @@ def dump_cif(host, fn, ffatypes=None):
              (ffatypes[i], symbols[i], frac[i,0], frac[i,1], frac[i,2]))
 
 
-def write_guest(guest, data, workdir, ffas):
+def write_guest(guest, data, workdir, ffas,log=None):
     """
         Write a guest.def file. Guest molecule is assumed to be rigid.
 
@@ -230,7 +232,13 @@ def write_guest(guest, data, workdir, ffas):
 
         ffas
             The atomtypes of the guest atoms
+       **Optional Arguments:**
+       log 
+            A Screenlog object can be passed locally
+            if None, the global log is used
     """
+    if log is None:
+        from yaff.log import log
     fn = os.path.join(workdir, "%s.def"%data[0])
     with open(fn,'w') as f:
         f.write("# critical constants: Temperature [T], Pressure [Pa],"
@@ -241,7 +249,7 @@ def write_guest(guest, data, workdir, ffas):
         else:
             # Try to load critical parameters from file
             try:
-                eos = PREOS.from_name(data[0])
+                eos = PREOS.from_name(data[0],log=log)
                 Tc, Pc, omega = eos.Tc, eos.Pc, eos.omega
             # Failed to load critical parameters
             except ValueError:
@@ -273,7 +281,7 @@ def write_guest(guest, data, workdir, ffas):
         f.write("# Number of config moves\n0\n")
 
 
-def write_pseudo_atoms(ff, workdir):
+def write_pseudo_atoms(ff, workdir,log=None):
     """
         Write pseudo_atoms.def file
     """
@@ -285,6 +293,8 @@ def write_pseudo_atoms(ff, workdir):
     else: charges = system.charges
     # RASPA cannot handle Gaussian charges
     if system.radii is not None and np.any(system.radii!=0.0):
+        if log is None:
+            from yaff.log import log
         if log.do_warning:
             log.warn("Atomic radii were specified, but RASPA will not take "
                      "this into account for electrostatic interactions")

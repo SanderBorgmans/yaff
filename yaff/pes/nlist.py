@@ -43,7 +43,6 @@ from __future__ import division
 
 import numpy as np
 
-from yaff.log import log, timer
 from yaff.pes.ext import neigh_dtype, nlist_status_init,\
         nlist_status_finish, nlist_build, nlist_recompute
 
@@ -54,7 +53,7 @@ __all__ = ['NeighborList','BondedNeighborList']
 class NeighborList(object):
     '''Algorithms to keep track of all pair distances below a given rcut
     '''
-    def __init__(self, system, skin=0, nlow=0, nhigh=-1):
+    def __init__(self, system, skin=0, nlow=0, nhigh=-1, log=None,timer=None):
         """
            **Arguments:**
 
@@ -89,6 +88,13 @@ class NeighborList(object):
                 pairs involving one atom of each part will be included. This is
                 useful to calculate interaction energies in Monte Carlo
                 simulations
+           log 
+                A Screenlog object can be passed locally
+                if None, the log of the system is used
+                
+           timer
+                A TimerGroup object can be passed locally
+                if None, the log of the system is used
         """
         if skin < 0:
             raise ValueError('The skin parameter must be positive.')
@@ -110,7 +116,12 @@ class NeighborList(object):
         # for skin algorithm:
         self._pos_old = None
         self.rebuild_next = False
-
+        if log is None:
+            log=system.log
+        self.log=log
+        if timer is None:
+            timer=system.timer
+        self.timer=timer
     def request_rcut(self, rcut):
         """Make sure the internal rcut parameter is at least is high as rcut."""
         self.rcut = max(self.rcut, rcut)
@@ -130,13 +141,13 @@ class NeighborList(object):
         """
         # determine the number of periodic images
         self.rmax = np.ceil((self.rcut+self.skin)/self.system.cell.rspacings-0.5).astype(int)
-        if log.do_high:
+        if self.log.do_high:
             if len(self.rmax) == 1:
-                log('rmax a       = %i' % tuple(self.rmax))
+                self.log('rmax a       = %i' % tuple(self.rmax))
             elif len(self.rmax) == 2:
-                log('rmax a,b     = %i,%i' % tuple(self.rmax))
+                self.log('rmax a,b     = %i,%i' % tuple(self.rmax))
             elif len(self.rmax) == 3:
-                log('rmax a,b,c   = %i,%i,%i' % tuple(self.rmax))
+                self.log('rmax a,b,c   = %i,%i,%i' % tuple(self.rmax))
         # Request a rebuild of the neighborlist because there is no simple way
         # to figure out whether an update is sufficient.
         self.rebuild_next = True
@@ -152,7 +163,7 @@ class NeighborList(object):
            neighbor lists array is reallocated if needed. The memory allocation
            is done in Python for convenience.
         '''
-        with log.section('NLIST'), timer.section('Nlists'):
+        with self.log.section('NLIST'), self.timer.section('Nlists'):
             assert self.rcut > 0
 
             if self._need_rebuild():
@@ -182,8 +193,8 @@ class NeighborList(object):
                     del new_neighs
                 # 3) get the number of neighbors in the list.
                 self.nneigh = nlist_status_finish(status)
-                if log.do_debug:
-                    log('Rebuilt, size = %i' % self.nneigh)
+                if self.log.do_debug:
+                    self.log('Rebuilt, size = %i' % self.nneigh)
                 # 4) store the current state to check in future calls if we
                 #    need to do a rebuild or a recompute.
                 self._checkpoint()
@@ -192,8 +203,8 @@ class NeighborList(object):
                 # just *recompute* the deltas and the distance in the
                 # neighborlist
                 nlist_recompute(self.system.pos, self._pos_old, self.system.cell, self.neighs[:self.nneigh])
-                if log.do_debug:
-                    log('Recomputed')
+                if self.log.do_debug:
+                    self.log('Recomputed')
 
     def _checkpoint(self):
         '''Internal method called after a neighborlist rebuild.'''
@@ -212,8 +223,8 @@ class NeighborList(object):
             # Compute an upper bound for the maximum relative displacement.
             disp = np.sqrt(((self.system.pos - self._pos_old)**2).sum(axis=1).max())
             disp *= 2*(self.rmax.max()+1)
-            if log.do_debug:
-                log('Maximum relative displacement %s      Skin %s' % (log.length(disp), log.length(self.skin)))
+            if self.log.do_debug:
+                self.log('Maximum relative displacement %s      Skin %s' % (self.log.length(disp), self.log.length(self.skin)))
             # Compare with skin parameter
             return disp >= self.skin
 
@@ -313,38 +324,38 @@ class NeighborList(object):
 
         # D) Compare
         wrong = False
-        with log.section('NLIST'):
+        with self.log.section('NLIST'):
             for key0, value0 in validation.items():
                 value1 = actual.pop(key0, None)
                 if value1 is None:
-                    log('Missing:  ', key0)
-                    log('  Validation %s %s %s %s' % (
-                        log.length(value0[0]), log.length(value0[1]),
-                        log.length(value0[2]), log.length(value0[3])
+                    self.log('Missing:  ', key0)
+                    self.log('  Validation %s %s %s %s' % (
+                        self.log.length(value0[0]), self.log.length(value0[1]),
+                        self.log.length(value0[2]), self.log.length(value0[3])
                     ))
                     wrong = True
-                elif abs(value0 - value1).max() > 1e-10*log.length.conversion:
-                    log('Different:', key0)
-                    log('  Actual     %s %s %s %s' % (
-                        log.length(value1[0]), log.length(value1[1]),
-                        log.length(value1[2]), log.length(value1[3])
+                elif abs(value0 - value1).max() > 1e-10*self.log.length.conversion:
+                    self.log('Different:', key0)
+                    self.log('  Actual     %s %s %s %s' % (
+                        self.log.length(value1[0]), self.log.length(value1[1]),
+                        self.log.length(value1[2]), self.log.length(value1[3])
                     ))
-                    log('  Validation %s %s %s %s' % (
-                        log.length(value0[0]), log.length(value0[1]),
-                        log.length(value0[2]), log.length(value0[3])
+                    self.log('  Validation %s %s %s %s' % (
+                        self.log.length(value0[0]), self.log.length(value0[1]),
+                        self.log.length(value0[2]), self.log.length(value0[3])
                     ))
-                    log('  Difference %10.3e %10.3e %10.3e %10.3e' %
-                        tuple((value0 - value1)/log.length.conversion)
+                    self.log('  Difference %10.3e %10.3e %10.3e %10.3e' %
+                        tuple((value0 - value1)/self.log.length.conversion)
                     )
-                    log('  AbsMaxDiff %10.3e' %
-                        (abs(value0 - value1).max()/log.length.conversion)
+                    self.log('  AbsMaxDiff %10.3e' %
+                        (abs(value0 - value1).max()/self.log.length.conversion)
                     )
                     wrong = True
             for key1, value1 in actual.items():
-                log('Redundant:', key1)
-                log('  Actual     %s %s %s %s' % (
-                    log.length(value1[0]), log.length(value1[1]),
-                    log.length(value1[2]), log.length(value1[3])
+                self.log('Redundant:', key1)
+                self.log('  Actual     %s %s %s %s' % (
+                    self.log.length(value1[0]), self.log.length(value1[1]),
+                    self.log.length(value1[2]), self.log.length(value1[3])
                 ))
                 wrong = True
         assert not wrong
@@ -355,7 +366,7 @@ class BondedNeighborList(NeighborList):
        pairs in the list are never updated, only distances are recomputed.
     '''
     def __init__(self, system, selected=[], add12=True, add13=True, add14=True,
-                    add15=False):
+                    add15=False,log=None,timer=None):
         '''
            **Arguments:**
 
@@ -367,6 +378,13 @@ class BondedNeighborList(NeighborList):
            selected
                 A list containing all pairs of atoms that should be considered.
                 Default: All 1-2, 1-3 and 1-4 pairs included
+           log 
+                A Screenlog object can be passed locally
+                if None, the log of the system is used
+                
+           timer
+                A TimerGroup object can be passed locally
+                if None, the timer of the system is used
         '''
         self.system = system
         for i0 in range(system.natom):
@@ -395,6 +413,12 @@ class BondedNeighborList(NeighborList):
         self.neighs = np.sort(neighs, order=['a','b']).copy()
         del neighs, selected, pairs
         self._pos_old = system.pos.copy()
+        if log is None:
+            log=system.log
+        self.log=log
+        if timer is None:
+            timer=system.timer
+        self.timer=timer
 
     def request_rcut(self, rcut):
         # Nothing to do...

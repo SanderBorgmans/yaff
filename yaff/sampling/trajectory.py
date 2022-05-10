@@ -30,7 +30,6 @@ import numpy as np
 import time
 import h5py as h5
 
-from yaff.log import log
 from yaff.sampling.iterative import Iterative, AttributeStateItem, \
     PosStateItem, DipoleStateItem, VolumeStateItem, CellStateItem, \
     EPotContribStateItem, Hook
@@ -40,19 +39,18 @@ __all__ = [
 ]
 
 class TrajScreenLog(Hook):
-    def __init__(self, start=0, step=1):
+    def __init__(self, start=0, step=1,log=None):
         Hook.__init__(self, start, step)
         self.time0 = None
-
     def __call__(self, iterative):
-        if log.do_medium:
+        if iterative.log.do_medium:
             if self.time0 is None:
                 self.time0 = time.time()
-                if log.do_medium:
-                    log.hline()
-                    log('counter  Walltime')
-                    log.hline()
-            log('%7i %10.1f' % (
+                if iterative.log.do_medium:
+                    iterative.log.hline()
+                    iterative.log('counter  Walltime')
+                    iterative.log.hline()
+            iterative.log('%7i %10.1f' % (
                 iterative.counter,
                 time.time() - self.time0,
             ))
@@ -70,7 +68,7 @@ class RefTrajectory(Iterative):
 
     log_name = 'TRAJEC'
 
-    def __init__(self, ff, fn_traj, state=None, hooks=None, counter0=0):
+    def __init__(self, ff, fn_traj, state=None, hooks=None, counter0=0,log=None,timer=None):
         """
            **Arguments:**
 
@@ -95,10 +93,18 @@ class RefTrajectory(Iterative):
 
            counter0
                 The counter value associated with the initial state.
+                
+            log 
+                A Screenlog object can be passed locally
+                if None, the log of ff is used
+                
+            timer
+                A TimerGroup object can be passed locally
+                if None, the  timer of ff is used
         """
         self.traj = h5.File(fn_traj, 'r')
         self.nframes = len(self.traj['trajectory/pos'][:])
-        Iterative.__init__(self, ff, state, hooks, counter0)
+        Iterative.__init__(self, ff, state, hooks, counter0,log=None,timer=None)
 
     def _add_default_hooks(self):
         if not any(isinstance(hook, TrajScreenLog) for hook in self.hooks):
@@ -117,5 +123,5 @@ class RefTrajectory(Iterative):
 
     def finalize(self):
         self.traj.close()
-        if log.do_medium:
-            log.hline()
+        if self.log.do_medium:
+            self.log.hline()

@@ -37,7 +37,6 @@ from molmod.constants import boltzmann
 from molmod.io.xyz import XYZWriter
 from molmod.periodic import periodic as pd
 
-from yaff.log import log
 
 __all__ = [
     'calc_cov_mat_internal', 'calc_cov_mat', 'calc_pca', 'pca_projection',
@@ -131,7 +130,7 @@ def calc_cov_mat(f, q_ref=None, start=0, end=None, step=1, select=None, path='tr
     # Return the covariance matrix
     return calc_cov_mat_internal(q, q_ref)
 
-def calc_pca(f_target, cov_mat=None, f=None, q_ref=None, start=0, end=None, step=1, select=None, path='trajectory/pos', mw=True, temp=None):
+def calc_pca(f_target, cov_mat=None, f=None, q_ref=None, start=0, end=None, step=1, select=None, path='trajectory/pos', mw=True, temp=None,log=None):
     """
         Performs a principle component analysis of the given trajectory.
 
@@ -180,7 +179,12 @@ def calc_pca(f_target, cov_mat=None, f=None, q_ref=None, start=0, end=None, step
 
         temp
             Temperature at which the simulation is carried out, necessary to determine the frequencies
+        log 
+                A Screenlog object can be passed locally
+                if None, the global log is used
     """
+    if log is None:
+        from yaff.log import log
     if cov_mat is None:
         if f is None:
             AssertionError('No covariance matrix nor h5.File instance provided.')
@@ -188,7 +192,7 @@ def calc_pca(f_target, cov_mat=None, f=None, q_ref=None, start=0, end=None, step
             with log.section('PCA'):
                 log('Calculating covariance matrix')
                 cov_mat, q_ref = calc_cov_mat(f, q_ref, start, end, step, select, path, mw)
-
+    
     with log.section('PCA'):
         log('Diagonalizing the covariance matrix')
         # Eigenvalue decomposition
@@ -232,7 +236,7 @@ def calc_pca(f_target, cov_mat=None, f=None, q_ref=None, start=0, end=None, step
     return eigval, eigvec
 
 
-def pca_projection(f_target, f, pm, start=0, end=None, step=1, select=None, path='trajectory/pos', mw=True):
+def pca_projection(f_target, f, pm, start=0, end=None, step=1, select=None, path='trajectory/pos', mw=True,log=None):
     """
         Determines the principal components of an MD simulation
 
@@ -273,6 +277,9 @@ def pca_projection(f_target, f, pm, start=0, end=None, step=1, select=None, path
 
         mw
             If mass_weighted is True, the covariance matrix is mass-weighted.
+        log 
+            A Screenlog object can be passed locally
+            if None, the global log is used
     """
     # Load in the relevant data
     q = f[path][start:end:step,:,:]
@@ -294,6 +301,8 @@ def pca_projection(f_target, f, pm, start=0, end=None, step=1, select=None, path
         q *= np.sqrt(masses)
 
     # Calculation of the principal components: projection of each q_j on the principal modes
+    if log is None:
+            from yaff.log import log
     with log.section('PCA'):
         log('Determining principal components')
         prin_comp = np.dot(q, pm)
@@ -307,7 +316,7 @@ def pca_projection(f_target, f, pm, start=0, end=None, step=1, select=None, path
         pca.create_dataset('pc', data=prin_comp)
 
 
-def write_principal_mode(f, f_pca, index, n_frames=100, select=None, mw=True, scaling=1.):
+def write_principal_mode(f, f_pca, index, n_frames=100, select=None, mw=True, scaling=1.,log = None):
     """
         Writes out one xyz file per principal mode given in index
 
@@ -338,6 +347,9 @@ def write_principal_mode(f, f_pca, index, n_frames=100, select=None, mw=True, sc
         scaling
             Scaling factor applied to the maximum deviation of the principal mode (i.e. the maximum
             principal component for that mode)
+        log 
+            A Screenlog object can be passed locally
+            if None, the global log is used
     """
 
     # Load in the relevant data
@@ -358,7 +370,8 @@ def write_principal_mode(f, f_pca, index, n_frames=100, select=None, mw=True, sc
     eigval = grp['eigvals'][index]
     # And the principal components
     pc = grp['pc'][:,index]
-
+    if log is None:
+            from yaff.log import log
     with log.section('PCA'):
         for i in range(len(index)):
             log('Writing out principal mode %s' %index[i])
@@ -406,7 +419,7 @@ def pca_similarity(covar_a, covar_b):
     # Return the PCA similarity (1 - PCA distance)
     return 1 - np.sqrt(np.trace(np.dot(a_sq-b_sq, a_sq-b_sq))/(np.trace(covar_a+covar_b)))
 
-def pca_convergence(f, eq_time=0*picosecond, n_parts=None, step=1, fn='PCA_convergence', n_bootstrap=50, mw=True):
+def pca_convergence(f, eq_time=0*picosecond, n_parts=None, step=1, fn='PCA_convergence', n_bootstrap=50, mw=True,log=None):
     """
     Calculates the convergence of the simulation by calculating the pca
     similarity for different subsets of the simulation.
@@ -436,6 +449,9 @@ def pca_convergence(f, eq_time=0*picosecond, n_parts=None, step=1, fn='PCA_conve
 
     mw
         If mass_weighted is True, the covariance matrix is mass-weighted.
+    log 
+        A Screenlog object can be passed locally
+        if None, the global log is used
     """
 
     # Configure n_parts, the array containing the number of parts in which the total simulation is divided
@@ -488,7 +504,8 @@ def pca_convergence(f, eq_time=0*picosecond, n_parts=None, step=1, fn='PCA_conve
 
     # Initialize the vector containing the average similarity over all the bootstrapped, divided trajectories
     sim_bt_all = np.zeros(len(n_parts))
-
+    if log is None:
+            from yaff.log import log
     for k in range(n_bootstrap):
         with log.section('PCA'):
             log('Processing %s of %s bootstrapped trajectories' %(k+1,n_bootstrap))

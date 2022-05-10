@@ -28,7 +28,6 @@ from __future__ import division
 
 import h5py as h5
 
-from yaff.log import log
 
 
 __all__ = [
@@ -37,14 +36,22 @@ __all__ = [
 ]
 
 
-def get_trajectory_group(f):
+def get_trajectory_group(f,log=None):
+
     '''Create or return an existing trajectory group
 
        **Arguments:**
 
        f
             An open HDF5 File or Group object.
+            
+       **Optional Arguments:**
+       log 
+            A Screenlog object can be passed locally
+            if None, the global log is used
     '''
+    if log is None:
+        from yaff.log import log
     if 'trajectory' not in f:
         if log.do_high:
             log('Creating new trajectory datagroup in %s.' % f.filename)
@@ -56,7 +63,7 @@ def get_trajectory_group(f):
     return tgrp
 
 
-def get_trajectory_datasets(tgrp, *fields):
+def get_trajectory_datasets(tgrp, *fields,log=None):
     '''Return a list of new/existing datasets corresponding to the given fields
 
        **Arguments:**
@@ -66,8 +73,14 @@ def get_trajectory_datasets(tgrp, *fields):
 
        fields
             A list of fields, i.e. pairs of name and row_shape.
+       **Optional Arguments:**
+       log 
+            A Screenlog object can be passed locally
+            if None, the global log is used
     '''
     result = []
+    if log is None:
+        from yaff.log import log
     for name, row_shape in fields:
         if name in tgrp:
             ds = tgrp[name]

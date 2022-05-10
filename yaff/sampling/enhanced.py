@@ -34,7 +34,6 @@ from molmod.constants import boltzmann
 from yaff.pes.bias import GaussianHills
 from yaff.pes.ff import ForcePartBias
 from yaff.sampling.iterative import Hook
-from yaff.log import log, timer
 
 
 __all__ = [
@@ -100,7 +99,7 @@ class MTDHook(Hook):
         self.f = f
         self.tempering = tempering
         # Add the bias part to the force field
-        part = ForcePartBias(ff.system, comlist=comlist)
+        part = ForcePartBias(ff.system, comlist=comlist,log=ff.log,timer=ff.timer)
         part.add_term(self.hills)
         ff.add_part(part)
         # Initialize hills from restart files

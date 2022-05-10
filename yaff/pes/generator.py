@@ -36,23 +36,23 @@ from molmod.units import parse_unit, kjmol, angstrom
 
 from itertools import permutations
 
-from yaff.log import log
 from yaff.pes.ext import PairPotEI, PairPotLJ, PairPotMM3, PairPotMM3CAP, PairPotExpRep, \
     PairPotQMDFFRep, PairPotDampDisp, PairPotDisp68BJDamp, Switch3, PairPotEIDip, \
     PairPotLJCross
 from yaff.pes.ff import ForcePartPair, ForcePartValence, \
     ForcePartEwaldReciprocal, ForcePartEwaldCorrection, \
     ForcePartEwaldNeutralizing, ForcePartTailCorrection, \
-    ForcePartEwaldReciprocalInteraction
+    ForcePartEwaldReciprocalInteraction,ForcePartTIP4P,\
+    ForcePartQTIP4P
 from yaff.pes.iclist import Bond, BendAngle, BendCos, \
     UreyBradley, DihedAngle, DihedCos, OopAngle, OopMeanAngle, OopCos, \
     OopMeanCos, OopDist, SqOopDist, DihedCos2, DihedCos3, DihedCos4, DihedCos6
 from yaff.pes.nlist import NeighborList
-from yaff.pes.scaling import Scalings
+from yaff.pes.scaling import Scalings,ScalingsExcluding
 from yaff.pes.vlist import Harmonic, PolyFour, Poly4, Fues, Cross, Cosine, \
     Chebychev1, Chebychev2, Chebychev3, Chebychev4, Chebychev6, PolySix, \
     MM3Quartic, MM3Bend, BondDoubleWell, Morse
-
+    
 
 __all__ = [
     'FFArgs', 'Generator',
@@ -89,7 +89,7 @@ class FFArgs(object):
     '''
     def __init__(self, rcut=18.89726133921252, tr=Switch3(7.558904535685008),
                  alpha_scale=3.5, gcut_scale=1.1, skin=0, smooth_ei=False,
-                 reci_ei='ewald', nlow=0, nhigh=-1, tailcorrections=False):
+                 reci_ei='ewald', nlow=0, nhigh=-1, tailcorrections=False,log=None,timer=None):
         """
            **Optional arguments:**
 
@@ -150,6 +150,13 @@ class FFArgs(object):
                 Boolean: if true, apply a correction for the truncation of the
                 pair potentials assuming the system is homogeneous in the
                 region where the truncation modifies the pair potential
+           log 
+                A Screenlog object can be passed locally
+                if None, the global log is used
+                
+           timer
+                A TimerGroup object can be passed locally
+                if None, the global timer is used
 
            The actual value of gcut, which depends on both gcut_scale and
            alpha_scale, determines the computational cost of the reciprocal term
@@ -174,11 +181,17 @@ class FFArgs(object):
         self.nlow = nlow
         self.nhigh = nhigh
         self.tailcorrections = tailcorrections
+        if log is None:
+            from yaff.log import log
+        self.log=log
+        if timer is None:
+            from yaff.log import timer
+        self.timer=timer
 
     def get_nlist(self, system):
         if self.nlist is None:
             self.nlist = NeighborList(system, skin=self.skin, nlow=self.nlow,
-                            nhigh=self.nhigh)
+                            nhigh=self.nhigh,log=self.log,timer=self.timer)
         return self.nlist
 
     def get_part(self, ForcePartClass):
@@ -194,7 +207,7 @@ class FFArgs(object):
     def get_part_valence(self, system):
         part_valence = self.get_part(ForcePartValence)
         if part_valence is None:
-            part_valence = ForcePartValence(system)
+            part_valence = ForcePartValence(system,log=self.log,timer=self.timer)
             self.parts.append(part_valence)
         return part_valence
 
@@ -215,7 +228,7 @@ class FFArgs(object):
             pair_pot_ei = PairPotEI(system.charges, alpha, self.rcut, self.tr, dielectric, system.radii)
         else:
             pair_pot_ei = PairPotEI(system.charges, alpha, self.rcut, None, dielectric, system.radii)
-        part_pair_ei = ForcePartPair(system, nlist, scalings, pair_pot_ei)
+        part_pair_ei = ForcePartPair(system, nlist, scalings, pair_pot_ei,log=self.log,timer= self.timer)
         self.parts.append(part_pair_ei)
         if self.reci_ei == 'ignore':
             # Nothing to do
@@ -223,17 +236,17 @@ class FFArgs(object):
         elif self.reci_ei.startswith('ewald'):
             if system.cell.nvec == 3:
                 if self.reci_ei == 'ewald_interaction':
-                    part_ewald_reci = ForcePartEwaldReciprocalInteraction(system.cell, alpha, self.gcut_scale*alpha, dielectric=dielectric)
+                    part_ewald_reci = ForcePartEwaldReciprocalInteraction(system.cell, alpha, self.gcut_scale*alpha, dielectric=dielectric,log=self.log,timer= self.timer)
                 elif self.reci_ei == 'ewald':
                     # Reciprocal-space electrostatics
-                    part_ewald_reci = ForcePartEwaldReciprocal(system, alpha, self.gcut_scale*alpha, dielectric, self.nlow, self.nhigh)
+                    part_ewald_reci = ForcePartEwaldReciprocal(system, alpha, self.gcut_scale*alpha, dielectric, self.nlow, self.nhigh,log=self.log,timer= self.timer)
                 else: raise NotImplementedError
                 self.parts.append(part_ewald_reci)
                 # Ewald corrections
-                part_ewald_corr = ForcePartEwaldCorrection(system, alpha, scalings, dielectric, self.nlow, self.nhigh)
+                part_ewald_corr = ForcePartEwaldCorrection(system, alpha, scalings, dielectric, self.nlow, self.nhigh,log=self.log,timer= self.timer)
                 self.parts.append(part_ewald_corr)
                 # Neutralizing background
-                part_ewald_neut = ForcePartEwaldNeutralizing(system, alpha, dielectric, self.nlow, self.nhigh)
+                part_ewald_neut = ForcePartEwaldNeutralizing(system, alpha, dielectric, self.nlow, self.nhigh,log=self.log,timer= self.timer)
                 self.parts.append(part_ewald_neut)
             elif system.cell.nvec != 0:
                 raise NotImplementedError('The ewald summation is only available for 3D periodic systems.')
@@ -1701,7 +1714,7 @@ class LJGenerator(NonbondedGenerator):
                 sigmas[i], epsilons[i] = par_list[0]
 
         # Prepare the global parameters
-        scalings = Scalings(system, scale_table[1], scale_table[2], scale_table[3], scale_table[4])
+        scalings = Scalings(system, scale_table[1], scale_table[2], scale_table[3], scale_table[4],log=ff_args.log)
 
         # Get the part. It should not exist yet.
         part_pair = ff_args.get_part_pair(PairPotLJ)
@@ -1710,7 +1723,7 @@ class LJGenerator(NonbondedGenerator):
 
         pair_pot = PairPotLJ(sigmas, epsilons, ff_args.rcut, ff_args.tr)
         nlist = ff_args.get_nlist(system)
-        part_pair = ForcePartPair(system, nlist, scalings, pair_pot)
+        part_pair = ForcePartPair(system, nlist, scalings, pair_pot,log=ff_args.log,timer=ff_args.timer)
         ff_args.parts.append(part_pair)
 
 
@@ -1745,11 +1758,11 @@ class LJCrossGenerator(NonbondedGenerator):
                 elif len(par_list) == 1:
                     sigmas[ffa_i,ffa_j], epsilons[ffa_i,ffa_j] = par_list[0]
                 elif len(par_list) == 0:
-                    if log.do_high:
-                        log('No LJCross parameters found for ffatypes %s,%s. Parameters set to zero.' % (system.ffatypes[i0], system.ffatypes[i1]))
+                    if ff_args.log.do_high:
+                        ff_args.log('No LJCross parameters found for ffatypes %s,%s. Parameters set to zero.' % (system.ffatypes[i0], system.ffatypes[i1]))
 
         # Prepare the global parameters
-        scalings = Scalings(system, scale_table[1], scale_table[2], scale_table[3], scale_table[4])
+        scalings = Scalings(system, scale_table[1], scale_table[2], scale_table[3], scale_table[4],log=ff_args.log)
 
         # Get the part. It should not exist yet.
         part_pair = ff_args.get_part_pair(PairPotLJCross)
@@ -1758,7 +1771,7 @@ class LJCrossGenerator(NonbondedGenerator):
 
         pair_pot = PairPotLJCross(system.ffatype_ids, epsilons, sigmas, ff_args.rcut, ff_args.tr)
         nlist = ff_args.get_nlist(system)
-        part_pair = ForcePartPair(system, nlist, scalings, pair_pot)
+        part_pair = ForcePartPair(system, nlist, scalings, pair_pot,log=ff_args.log,timer=ff_args.timer)
         ff_args.parts.append(part_pair)
 
 
@@ -1788,7 +1801,7 @@ class MM3Generator(NonbondedGenerator):
                 sigmas[i], epsilons[i], onlypaulis[i] = par_list[0]
 
         # Prepare the global parameters
-        scalings = Scalings(system, scale_table[1], scale_table[2], scale_table[3], scale_table[4])
+        scalings = Scalings(system, scale_table[1], scale_table[2], scale_table[3], scale_table[4],log=ff_args.log)
 
         # Get the part. It should not exist yet.
         part_pair = ff_args.get_part_pair(PairPotMM3)
@@ -1797,7 +1810,7 @@ class MM3Generator(NonbondedGenerator):
 
         pair_pot = PairPotMM3(sigmas, epsilons, onlypaulis, ff_args.rcut, ff_args.tr)
         nlist = ff_args.get_nlist(system)
-        part_pair = ForcePartPair(system, nlist, scalings, pair_pot)
+        part_pair = ForcePartPair(system, nlist, scalings, pair_pot,log=ff_args.log,timer=ff_args.timer)
         ff_args.parts.append(part_pair)
 
 
@@ -1827,7 +1840,7 @@ class MM3CAPGenerator(NonbondedGenerator):
                 sigmas[i], epsilons[i], onlypaulis[i] = par_list[0]
 
         # Prepare the global parameters
-        scalings = Scalings(system, scale_table[1], scale_table[2], scale_table[3], scale_table[4])
+        scalings = Scalings(system, scale_table[1], scale_table[2], scale_table[3], scale_table[4],log=ff_args.log)
 
         # Get the part. It should not exist yet.
         part_pair = ff_args.get_part_pair(PairPotMM3CAP)
@@ -1836,7 +1849,7 @@ class MM3CAPGenerator(NonbondedGenerator):
 
         pair_pot = PairPotMM3CAP(sigmas, epsilons, onlypaulis, ff_args.rcut, ff_args.tr)
         nlist = ff_args.get_nlist(system)
-        part_pair = ForcePartPair(system, nlist, scalings, pair_pot)
+        part_pair = ForcePartPair(system, nlist, scalings, pair_pot,log=ff_args.log,timer=ff_args.timer)
         ff_args.parts.append(part_pair)
 
 class ExpRepGenerator(NonbondedGenerator):
@@ -1882,15 +1895,15 @@ class ExpRepGenerator(NonbondedGenerator):
             for i1 in range(i0+1):
                 cpar_list = cpar_table.get((system.ffatypes[i0], system.ffatypes[i1]), [])
                 if len(cpar_list) == 0:
-                    if log.do_high:
-                        log('No EXPREP cross parameters found for ffatypes %s,%s. Mixing rule will be used' % (system.ffatypes[i0], system.ffatypes[i1]))
+                    if ff_args.log.do_high:
+                        ff_args.log('No EXPREP cross parameters found for ffatypes %s,%s. Mixing rule will be used' % (system.ffatypes[i0], system.ffatypes[i1]))
                 else:
                     amp_cross[i0,i1], b_cross[i0,i1] = cpar_list[0]
                     if i0 != i1:
                         amp_cross[i1,i0], b_cross[i1,i0] = cpar_list[0]
 
         # Prepare the global parameters
-        scalings = Scalings(system, scale_table[1], scale_table[2], scale_table[3], scale_table[4])
+        scalings = Scalings(system, scale_table[1], scale_table[2], scale_table[3], scale_table[4],log=ff_args.log)
         amp_mix, amp_mix_coeff = mixing_rules['A']
         if amp_mix == 0:
             amp_mix_coeff = 0.0
@@ -1912,7 +1925,7 @@ class ExpRepGenerator(NonbondedGenerator):
             amps, amp_mix, amp_mix_coeff, bs, b_mix, b_mix_coeff,
         )
         nlist = ff_args.get_nlist(system)
-        part_pair = ForcePartPair(system, nlist, scalings, pair_pot)
+        part_pair = ForcePartPair(system, nlist, scalings, pair_pot,log=ff_args.log,timer=ff_args.timer)
         ff_args.parts.append(part_pair)
 
 
@@ -1941,15 +1954,15 @@ class QMDFFRepGenerator(NonbondedGenerator):
             for i1 in range(i0+1):
                 cpar_list = cpar_table.get((system.ffatypes[i0], system.ffatypes[i1]), [])
                 if len(cpar_list) == 0:
-                    if log.do_high:
-                        log('No EXPREP cross parameters found for ffatypes %s,%s.' % (system.ffatypes[i0], system.ffatypes[i1]))
+                    if ff_args.log.do_high:
+                        ff_args.log('No EXPREP cross parameters found for ffatypes %s,%s.' % (system.ffatypes[i0], system.ffatypes[i1]))
                 else:
                     amp_cross[i0,i1], b_cross[i0,i1] = cpar_list[0]
                     if i0 != i1:
                         amp_cross[i1,i0], b_cross[i1,i0] = cpar_list[0]
 
         # Prepare the global parameters
-        scalings = Scalings(system, scale_table[1], scale_table[2], scale_table[3], scale_table[4])
+        scalings = Scalings(system, scale_table[1], scale_table[2], scale_table[3], scale_table[4],log=ff_args.log)
 
         # Get the part. It should not exist yet.
         part_pair = ff_args.get_part_pair(PairPotQMDFFRep)
@@ -1960,7 +1973,7 @@ class QMDFFRepGenerator(NonbondedGenerator):
             system.ffatype_ids, amp_cross, b_cross, ff_args.rcut, ff_args.tr
         )
         nlist = ff_args.get_nlist(system)
-        part_pair = ForcePartPair(system, nlist, scalings, pair_pot)
+        part_pair = ForcePartPair(system, nlist, scalings, pair_pot,log=ff_args.log,timer=ff_args.timer)
         ff_args.parts.append(part_pair)
 
 
@@ -2002,15 +2015,15 @@ class DampDispGenerator(NonbondedGenerator):
             for i1 in range(i0+1):
                 cpar_list = cpar_table.get((system.ffatypes[i0], system.ffatypes[i1]), [])
                 if len(cpar_list) == 0:
-                    if log.do_high:
-                        log('No DAMPDISP cross parameters found for ffatypes %s,%s. Mixing rule will be used' % (system.ffatypes[i0], system.ffatypes[i1]))
+                    if ff_args.log.do_high:
+                        ff_args.log('No DAMPDISP cross parameters found for ffatypes %s,%s. Mixing rule will be used' % (system.ffatypes[i0], system.ffatypes[i1]))
                 else:
                     c6_cross[i0,i1], b_cross[i0,i1] = cpar_list[0]
                     if i0 != i1:
                         c6_cross[i1,i0], b_cross[i1,i0] = cpar_list[0]
 
         # Prepare the global parameters
-        scalings = Scalings(system, scale_table[1], scale_table[2], scale_table[3], scale_table[4])
+        scalings = Scalings(system, scale_table[1], scale_table[2], scale_table[3], scale_table[4],log=ff_args.log)
 
         # Get the part. It should not exist yet.
         part_pair = ff_args.get_part_pair(PairPotDampDisp)
@@ -2019,7 +2032,7 @@ class DampDispGenerator(NonbondedGenerator):
 
         pair_pot = PairPotDampDisp(system.ffatype_ids, c6_cross, b_cross, ff_args.rcut, ff_args.tr, c6s, bs, vols)
         nlist = ff_args.get_nlist(system)
-        part_pair = ForcePartPair(system, nlist, scalings, pair_pot)
+        part_pair = ForcePartPair(system, nlist, scalings, pair_pot,log=ff_args.log,timer=ff_args.timer)
         ff_args.parts.append(part_pair)
 
 
@@ -2053,14 +2066,14 @@ class D3BJGenerator(NonbondedGenerator):
             for i1 in range(i0+1):
                 par_list = par_table.get((system.ffatypes[i0], system.ffatypes[i1]), [])
                 if len(par_list) == 0:
-                    if log.do_high:
-                        log('No D3BJ cross parameters found for ffatypes %s,%s. Parameters reset to zero.' % (system.ffatypes[i0], system.ffatypes[i1]))
+                    if ff_args.log.do_high:
+                        ff_args.log('No D3BJ cross parameters found for ffatypes %s,%s. Parameters reset to zero.' % (system.ffatypes[i0], system.ffatypes[i1]))
                 else:
                     c6_cross[i0,i1], c8_cross[i0,i1] = par_list[0]
                     if i0 != i1:
                         c6_cross[i1,i0], c8_cross[i1,i0] = par_list[0]
         # Prepare the global parameters
-        scalings = Scalings(system, scale_table[1], scale_table[2], scale_table[3], scale_table[4])
+        scalings = Scalings(system, scale_table[1], scale_table[2], scale_table[3], scale_table[4],log=ff_args.log)
         gps = globalpar_table.get(())[0]
         s6,s8,a1,a2 = gps[0],gps[1],gps[2],gps[3]
         # Get the part. It should not exist yet.
@@ -2070,7 +2083,7 @@ class D3BJGenerator(NonbondedGenerator):
 
         pair_pot = PairPotDisp68BJDamp(system.ffatype_ids, c6_cross, c8_cross, R_cross, c6_scale=s6, c8_scale=s8, bj_a=a1, bj_b=a2, rcut=ff_args.rcut, tr=ff_args.tr)
         nlist = ff_args.get_nlist(system)
-        part_pair = ForcePartPair(system, nlist, scalings, pair_pot)
+        part_pair = ForcePartPair(system, nlist, scalings, pair_pot,log=ff_args.log,timer=ff_args.timer)
         ff_args.parts.append(part_pair)
 
 
@@ -2139,8 +2152,8 @@ class FixedChargeGenerator(NonbondedGenerator):
     def apply(self, atom_table, bond_table, scale_table, dielectric, system, ff_args):
         if system.charges is None:
             system.charges = np.zeros(system.natom)
-        elif log.do_warning and abs(system.charges).max() != 0:
-            log.warn('Overwriting charges in system.')
+        elif ff_args.log.do_warning and abs(system.charges).max() != 0:
+            ff_args.log.warn('Overwriting charges in system.')
         system.charges[:] = 0.0
         system.radii = np.zeros(system.natom)
 
@@ -2151,8 +2164,8 @@ class FixedChargeGenerator(NonbondedGenerator):
                 charge, radius = pars
                 system.charges[i] += charge
                 system.radii[i] = radius
-            elif log.do_warning:
-                log.warn('No charge defined for atom %i with fftype %s.' % (i, system.get_ffatype(i)))
+            elif ff_args.log.do_warning:
+                ff_args.log.warn('No charge defined for atom %i with fftype %s.' % (i, system.get_ffatype(i)))
         for i0, i1 in system.iter_bonds():
             ffatype0 = system.get_ffatype(i0)
             ffatype1 = system.get_ffatype(i1)
@@ -2160,19 +2173,164 @@ class FixedChargeGenerator(NonbondedGenerator):
                 continue
             charge_transfer = bond_table.get((ffatype0, ffatype1))
             if charge_transfer is None:
-                if log.do_warning:
-                    log.warn('No charge transfer parameter for atom pair (%i,%i) with fftype (%s,%s).' % (i0, i1, system.get_ffatype(i0), system.get_ffatype(i1)))
+                if ff_args.log.do_warning:
+                    ff_args.log.warn('No charge transfer parameter for atom pair (%i,%i) with fftype (%s,%s).' % (i0, i1, system.get_ffatype(i0), system.get_ffatype(i1)))
             else:
                 system.charges[i0] += charge_transfer
                 system.charges[i1] -= charge_transfer
 
         # prepare other parameters
-        scalings = Scalings(system, scale_table[1], scale_table[2], scale_table[3], scale_table[4])
+        scalings = Scalings(system, scale_table[1], scale_table[2], scale_table[3], scale_table[4],log=ff_args.log)
 
         # Setup the electrostatic pars
         ff_args.add_electrostatic_parts(system, scalings, dielectric)
+class TIP4Generator(FixedChargeGenerator):
+    
+    def scaling_adapted_apply(self, atom_table, bond_table, scale_table, dielectric, system, ff_args, water_atom_indices):
+        if system.charges is None:
+            system.charges = np.zeros(system.natom)
+        elif ff_args.log.do_warning and abs(system.charges).max() != 0:
+            ff_args.log.warn('Overwriting charges in system.')
+        system.charges[:] = 0.0
+        system.radii = np.zeros(system.natom)
 
+        # compute the charges
+        for i in range(system.natom):
+            pars = atom_table.get(system.get_ffatype(i))
+            if pars is not None:
+                charge, radius = pars
+                system.charges[i] += charge
+                system.radii[i] = radius
+            elif ff_args.log.do_warning:
+                ff_args.log.warn('No charge defined for atom %i with fftype %s.' % (i, system.get_ffatype(i)))
+        for i0, i1 in system.iter_bonds():
+            ffatype0 = system.get_ffatype(i0)
+            ffatype1 = system.get_ffatype(i1)
+            if ffatype0 == ffatype1:
+                continue
+            charge_transfer = bond_table.get((ffatype0, ffatype1))
+            if charge_transfer is None:
+                if ff_args.log.do_warning:
+                    ff_args.log.warn('No charge transfer parameter for atom pair (%i,%i) with fftype (%s,%s).' % (i0, i1, system.get_ffatype(i0), system.get_ffatype(i1)))
+            else:
+                system.charges[i0] += charge_transfer
+                system.charges[i1] -= charge_transfer
 
+        # prepare other parameters
+        sorted_water_atom_indices=np.sort(water_atom_indices)
+        scaling_excpetions_water=[]
+        for atom_indices in sorted_water_atom_indices:
+            scaling_excpetions_water.append((atom_indices[2],atom_indices[1]))
+            scaling_excpetions_water.append((atom_indices[2],atom_indices[0]))
+            scaling_excpetions_water.append((atom_indices[1],atom_indices[0]))
+        scalings = ScalingsExcluding(system, scale_table[1], scale_table[2], scale_table[3], scale_table[4],scaling_excpetions_water,ff_args.log)
+
+        # Setup the electrostatic pars
+        ff_args.add_electrostatic_parts(system, scalings, dielectric)
+class TIP4PGenerator(TIP4Generator):
+    """
+    Exactly the same as fixed charge but now with a different system
+    """
+    prefix = 'FIXQTIP4P'
+    suffixes = ['UNIT', 'SCALE', 'ATOM', 'BOND', 'DIELECTRIC','D_OM_REL']
+    par_info = [('Q0', float), ('P', float), ('R', float)]
+    def __call__(self, system, parsec, ff_args):
+        self.check_suffixes(parsec)
+        conversions = self.process_units(parsec['UNIT'])
+        atom_table = self.process_atoms(parsec['ATOM'], conversions)
+        bond_table = self.process_bonds(parsec['BOND'], conversions)
+        scale_table = self.process_scales(parsec['SCALE'])
+        dielectric = self.process_dielectric(parsec['DIELECTRIC'])
+        d_om_rel=self.process_D_OM_REL(parsec['D_OM_REL'])
+        self.apply(atom_table, bond_table, scale_table, dielectric, system, ff_args,d_om_rel)
+    def process_D_OM_REL(self, pardef):
+        
+        result=None
+        for counter, line in pardef:
+            if result is not None:
+                pardef.complain(counter, 'is redundant. The D_OM_REL suffix may only occur once')
+            words = line.split()
+            if len(words) != 1:
+                pardef.complain(counter, 'must have one argument')
+            try:
+                result = float(words[0])
+            except ValueError:
+                pardef.complain(counter, 'must have a floating point argument')
+        if result is None:
+            pardef.complain(None,"No D_OM_REL specified")
+            result=  0.13194
+        return result
+    
+    def apply(self, atom_table, bond_table, scale_table, dielectric, system, ff_args,d_om_rel):
+        '''
+        Generates the electrostatic interaction on the system of ForcepartTIP4P, first copy the ff_args as the neighbourlist is different
+
+        '''
+        ff_args_tip4p=FFArgs(rcut=ff_args.rcut, tr=ff_args.tr,
+                 alpha_scale=ff_args.alpha_scale, gcut_scale=ff_args.gcut_scale, skin=ff_args.skin, smooth_ei=ff_args.smooth_ei,
+                 reci_ei=ff_args.reci_ei, nlow=ff_args.nlow, nhigh=ff_args.nhigh, tailcorrections=ff_args.tailcorrections,log=ff_args.log,timer=ff_args.timer)
+        part_tip4p=ForcePartTIP4P(system,d_om_rel)
+        if scale_table[1]==0 and scale_table[2]==0:
+            FixedChargeGenerator.apply(self, atom_table, bond_table, scale_table, dielectric,part_tip4p.system_ghosts, ff_args_tip4p)
+        else:
+            TIP4Generator.scaling_adapted_apply(self, atom_table, bond_table, scale_table, dielectric,part_tip4p.system_ghosts, ff_args_tip4p,part_tip4p.water_atom_indices)
+        for part in ff_args_tip4p.parts:
+            part_tip4p.add_part(part)
+        part_tip4p.nlist=ff_args_tip4p.nlist
+        ff_args.parts.append(part_tip4p)
+   
+class QTIP4PGenerator(TIP4Generator):
+    """
+    Exactly the same as fixed charge but now with a different system
+    """
+    prefix = 'FIXQQTIP4P'
+    suffixes = ['UNIT', 'SCALE', 'ATOM', 'BOND', 'DIELECTRIC','GAMMA']
+    par_info = [('Q0', float), ('P', float), ('R', float)]
+    def __call__(self, system, parsec, ff_args):
+        self.check_suffixes(parsec)
+        conversions = self.process_units(parsec['UNIT'])
+        atom_table = self.process_atoms(parsec['ATOM'], conversions)
+        bond_table = self.process_bonds(parsec['BOND'], conversions)
+        scale_table = self.process_scales(parsec['SCALE'])
+        dielectric = self.process_dielectric(parsec['DIELECTRIC'])
+        gamma=self.process_GAMMA(parsec['GAMMA'])
+        self.apply(atom_table, bond_table, scale_table, dielectric, system, ff_args,gamma)
+    def process_GAMMA(self, pardef):
+        
+        result=None
+        for counter, line in pardef:
+            if result is not None:
+                pardef.complain(counter, 'is redundant. The GAMMA suffix may only occur once')
+            words = line.split()
+            if len(words) != 1:
+                pardef.complain(counter, 'must have one argument')
+            try:
+                result = float(words[0])
+            except ValueError:
+                pardef.complain(counter, 'must have a floating point argument')
+        if result is None:
+            pardef.complain(None,"No gamma specified")
+            result=  0.73612
+        return result
+    
+    def apply(self, atom_table, bond_table, scale_table, dielectric, system, ff_args,gamma):
+        '''
+        Generates the electrostatic interaction on the system of ForcepartTIP4P, first copy the ff_args as the neighbourlist is different
+
+        '''
+        ff_args_tip4p=FFArgs(rcut=ff_args.rcut, tr=ff_args.tr,
+                 alpha_scale=ff_args.alpha_scale, gcut_scale=ff_args.gcut_scale, skin=ff_args.skin, smooth_ei=ff_args.smooth_ei,
+                 reci_ei=ff_args.reci_ei, nlow=ff_args.nlow, nhigh=ff_args.nhigh, tailcorrections=ff_args.tailcorrections,log=ff_args.log,timer=ff_args.timer)
+        part_tip4p=ForcePartQTIP4P(system,gamma)
+        if scale_table[1]==0 and scale_table[2]==0:
+            FixedChargeGenerator.apply(self, atom_table, bond_table, scale_table, dielectric,part_tip4p.system_ghosts, ff_args_tip4p)
+        else:
+            TIP4Generator.scaling_adapted_apply(self, atom_table, bond_table, scale_table, dielectric,part_tip4p.system_ghosts, ff_args_tip4p,part_tip4p.water_atom_indices)
+        for part in ff_args_tip4p.parts:
+            part_tip4p.add_part(part)
+        part_tip4p.nlist=ff_args_tip4p.nlist
+        ff_args.parts.append(part_tip4p)
+    
 def apply_generators(system, parameters, ff_args):
     '''Populate the attributes of ff_args, prepares arguments for ForceField
 
@@ -2200,16 +2358,16 @@ def apply_generators(system, parameters, ff_args):
     for prefix, section in parameters.sections.items():
         generator = generators.get(prefix)
         if generator is None:
-            if log.do_warning:
-                log.warn('There is no generator named %s. It will be ignored.' % prefix)
+            if ff_args.log.do_warning:
+                ff_args.log.warn('There is no generator named %s. It will be ignored.' % prefix)
         else:
             generator(system, section, ff_args)
 
     # If tail corrections are requested, go through all parts and add when necessary
     if ff_args.tailcorrections:
         if system.cell.nvec==0:
-            if log.do_warning:
-                log.warn('Tail corrections were requested, but this makes no sense for non-periodic system. Not adding tail corrections...')
+            if ff_args.log.do_warning:
+                ff_args.log.warn('Tail corrections were requested, but this makes no sense for non-periodic system. Not adding tail corrections...')
         elif system.cell.nvec==3:
             for part in ff_args.parts:
                 # Only add tail correction to pair potentials
@@ -2219,13 +2377,13 @@ def apply_generators(system, parameters, ff_args):
                     if isinstance(part.pair_pot,PairPotEI) or isinstance(part.pair_pot,PairPotEIDip):
                         continue
                     else:
-                        part_tailcorrection = ForcePartTailCorrection(system, part, nlow=ff_args.nlow, nhigh=ff_args.nhigh)
+                        part_tailcorrection = ForcePartTailCorrection(system, part, nlow=ff_args.nlow, nhigh=ff_args.nhigh,log=ff_args.log,timer=ff_args.timer)
                         ff_args.parts.append(part_tailcorrection)
         else:
             raise ValueError('Tail corrections not available for 1-D and 2-D periodic systems')
 
     part_valence = ff_args.get_part(ForcePartValence)
-    if part_valence is not None and log.do_warning:
+    if part_valence is not None and ff_args.log.do_warning:
         # Basic check for missing terms
         groups = set([])
         nv = part_valence.vlist.nv
@@ -2240,7 +2398,7 @@ def apply_generators(system, parameters, ff_args):
         # Check if some are missing
         for i0, i1 in system.iter_bonds():
             if frozenset([i0, i1]) not in groups:
-                log.warn('No covalent two-body term for atoms ({}, {})'.format(i0, i1))
+                ff_args.log.warn('No covalent two-body term for atoms ({}, {})'.format(i0, i1))
         for i0, i1, i2 in system.iter_angles():
             if frozenset([i0, i1, i2]) not in groups:
-                log.warn('No covalent three-body term for atoms ({}, {} {})'.format(i0, i1, i2))
+                ff_args.log.warn('No covalent three-body term for atoms ({}, {} {})'.format(i0, i1, i2))

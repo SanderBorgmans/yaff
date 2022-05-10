@@ -45,8 +45,6 @@ cimport vlist
 cimport truncation
 cimport grid
 
-from yaff.log import log
-
 
 __all__ = [
     'Cell',
@@ -575,7 +573,7 @@ cdef class Hammer(Truncation):
 
     tau = property(_get_tau)
 
-    def get_log(self):
+    def get_log(self,log):
         '''get_log()
 
            Return a string suitable for the screen logger
@@ -611,7 +609,7 @@ cdef class Switch3(Truncation):
 
     width = property(_get_width)
 
-    def get_log(self):
+    def get_log(self,log):
         '''get_log()
 
            Return a string suitable for the screen logger
@@ -797,7 +795,7 @@ cdef class PairPotLJ(PairPot):
         self._c_sigmas = sigmas
         self._c_epsilons = epsilons
 
-    def log(self):
+    def get_log(self,log):
         '''Write some suitable post-initialization screen log'''
         if log.do_high:
             log.hline()
@@ -880,7 +878,7 @@ cdef class PairPotMM3(PairPot):
         self._c_epsilons = epsilons
         self._c_onlypaulis = onlypaulis
 
-    def log(self):
+    def get_log(self,log):
         '''Write some suitable post-initialization screen log'''
         if log.do_high:
             log.hline()
@@ -969,7 +967,7 @@ cdef class PairPotMM3CAP(PairPot):
         self._c_epsilons = epsilons
         self._c_onlypaulis = onlypaulis
 
-    def log(self):
+    def get_log(self,log):
         '''Write some suitable post-initialization screen log'''
         if log.do_high:
             log.hline()
@@ -1016,7 +1014,7 @@ cdef class PairPotGrimme(PairPot):
         self._c_r0 = r0
         self._c_c6 = c6
 
-    def log(self):
+    def get_log(self,log):
         if log.do_high:
             log.hline()
             log('   Atom         r0         c6')
@@ -1171,7 +1169,7 @@ cdef class PairPotExpRep(PairPot):
                         b_cross[i0, i1] = b
                     b_cross[i1, i0] = b_cross[i0, i1]
 
-    def log(self):
+    def get_log(self,log):
         '''Print suitable initialization info on screen.'''
         if log.do_high:
             log.hline()
@@ -1330,7 +1328,7 @@ cdef class PairPotQMDFFRep(PairPot):
                         b_cross[i0, i1] = b
                     b_cross[i1, i0] = b_cross[i0, i1]
 
-    def log(self):
+    def get_log(self,log):
         '''Print suitable initialization info on screen.'''
         if log.do_high:
             log.hline()
@@ -1420,7 +1418,7 @@ cdef class PairPotLJCross(PairPot):
         self._c_eps_cross = eps_cross
         self._c_sig_cross = sig_cross
 
-    def log(self):
+    def get_log(self,log):
         '''Print suitable initialization info on screen.'''
         if log.do_high:
             log.hline()
@@ -1567,7 +1565,7 @@ cdef class PairPotDampDisp(PairPot):
                     b_cross[i0, i1] = 0.5*(bs[i0] + bs[i1])
                     b_cross[i1, i0] = b_cross[i0, i1]
 
-    def log(self):
+    def get_log(self,log):
         '''Print suitable initialization info on screen.'''
         if log.do_high:
             log.hline()
@@ -1703,7 +1701,7 @@ cdef class PairPotDisp68BJDamp(PairPot):
         self._c_c8_cross = c8_cross
         self._c_R_cross = R_cross
 
-    def log(self):
+    def get_log(self,log):
         '''Print suitable initialization info on screen.'''
         if log.do_medium:
             log('  c6_scale:             %s' % ("%10.5f"%self.c6_scale))
@@ -1820,7 +1818,7 @@ cdef class PairPotEI(PairPot):
         self._c_charges = charges
         self._c_radii = radii
 
-    def log(self):
+    def get_log(self,log):
         '''Print suitable initialization info on screen.'''
         if log.do_medium:
             log('  alpha:                 %s' % log.invlength(self.alpha))
@@ -1919,13 +1917,13 @@ cdef class PairPotEIDip(PairPot):
                 np.ndarray[double, ndim=2] vtens, long nneigh):
         #Override parents method to add dipole creation energy
         #TODO: Does this contribute to gpos or vtens?
-        log("Computing PairPotEIDip energy and gradient")
+        #log("Computing PairPotEIDip energy and gradient")
         E = PairPot.compute(self, neighs, stab, gpos, vtens, nneigh)
         E += 0.5*np.dot( np.transpose(np.reshape( self._c_dipoles, (-1,) )) , np.dot( self.poltens_i, np.reshape( self._c_dipoles, (-1,) ) ) )
         return E
 
 
-    def log(self):
+    def get_log(self,log):
         '''Print suitable initialization info on screen.'''
         if log.do_high:
             log.hline()
@@ -2007,7 +2005,7 @@ cdef class PairPotEiSlater1s1sCorr(PairPot):
         self._c_slater1s_N = slater1s_N
         self._c_slater1s_Z = slater1s_Z
 
-    def log(self):
+    def get_log(self,log):
         '''Print suitable initialization info on screen.'''
         if log.do_high:
             log.hline()
@@ -2104,7 +2102,7 @@ cdef class PairPotEiSlater1sp1spCorr(PairPot):
         self._c_slater1p_Z = slater1p_Z
 
 
-    def log(self):
+    def get_log(self,log):
         '''Print suitable initialization info on screen.'''
         if log.do_high:
             log.hline()
@@ -2206,7 +2204,7 @@ cdef class PairPotOlpSlater1s1s(PairPot):
         self._c_slater1s_widths = slater1s_widths
         self._c_slater1s_N = slater1s_N
 
-    def log(self):
+    def get_log(self,log):
         '''Print suitable initialization info on screen.'''
         if log.do_medium:
             log('  ex_scale:             %s' % ("%10.5f"%self.ex_scale))
@@ -2305,7 +2303,7 @@ cdef class PairPotChargeTransferSlater1s1s(PairPot):
         self._c_slater1s_widths = slater1s_widths
         self._c_slater1s_N = slater1s_N
 
-    def log(self):
+    def get_log(self,log):
         '''Print suitable initialization info on screen.'''
         if log.do_medium:
             log('  ct_scale:             %s' % ("%10.5f"%self.ct_scale))

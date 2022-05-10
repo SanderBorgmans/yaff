@@ -34,7 +34,6 @@ from __future__ import division
 import numpy as np
 
 from molmod.minimizer import check_delta
-from yaff.log import log
 
 
 __all__ = [
@@ -80,7 +79,7 @@ class DOF(object):
             dxs[:,zero] = 0.0
         check_delta(self.fun, x, dxs)
 
-    def log(self):
+    def get_log(self,log=None):
         pass
 
 
@@ -462,9 +461,20 @@ class BaseCellDOF(DOF):
         self._last_pos[:] = self._pos[:]
         self._last_rvecs[:] = self._rvecs[:]
 
-    def log(self):
+    def get_log(self,log=None):
+        '''
+        generates the log
+
+        Parameters
+        ----------
+        log : ScreenLog, optional
+            The screenlog to whcih the logs are written.
+            if None, the log of self.ff is used.
+        '''
         rvecs = self.ff.system.cell.rvecs
         lengths, angles = self.ff.system.cell.parameters
+        if log is None:
+            log= self.ff.log
         rvec_names = 'abc'
         angle_names = ['alpha', 'beta', 'gamma']
         log(" ")

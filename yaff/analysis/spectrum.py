@@ -30,10 +30,9 @@ import numpy as np
 
 from molmod.constants import lightspeed
 from molmod.units import centimeter
-from yaff.log import log
 from yaff.analysis.utils import get_slice
 from yaff.analysis.hook import AnalysisInput, AnalysisHook
-
+from yaff.log import log
 
 __all__ = ['Spectrum']
 
@@ -120,6 +119,8 @@ class Spectrum(AnalysisHook):
         self.ssize = self.bsize//2+1 # the length of the spectrum array
         self.amps = np.zeros(self.ssize, float)
         self.nfft = 0 # the number of fft calls, for statistics
+
+        
         if outpath is None:
             outpath = path + '_spectrum'
         analysis_inputs = {'signal': AnalysisInput(path, key)}

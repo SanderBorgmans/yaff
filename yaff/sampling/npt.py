@@ -30,7 +30,6 @@ import numpy as np
 
 from molmod import boltzmann, femtosecond, kjmol, bar, atm
 
-from yaff.log import log, timer
 from yaff.sampling.utils import get_random_vel, cell_symmetrize, get_random_vel_press, \
     get_ndof_internal_md, clean_momenta, get_ndof_baro
 from yaff.sampling.verlet import VerletHook

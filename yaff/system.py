@@ -28,7 +28,6 @@ from __future__ import division
 
 import numpy as np, h5py as h5
 
-from yaff.log import log
 from yaff.atselect import check_name, atsel_compile, iter_matches
 from yaff.pes.ext import Cell
 
@@ -51,7 +50,7 @@ class System(object):
     def __init__(self, numbers, pos, scopes=None, scope_ids=None, ffatypes=None,
                  ffatype_ids=None, bonds=None, rvecs=None, charges=None,
                  radii=None, valence_charges=None, dipoles=None, radii2=None,
-                 masses=None):
+                 masses=None,log=None):
         r'''Initialize a System object.
 
            **Arguments:**
@@ -132,6 +131,9 @@ class System(object):
 
            masses
                 The atomic masses (in atomic units, i.e. m_e)
+           log 
+                A Screenlog object can be passed locally
+                if None, the global log is used
 
 
            Several attributes are derived from the (optional) arguments:
@@ -145,6 +147,9 @@ class System(object):
              system.neighs3[j] is ``True`` if there are three bonds between
              atoms i and j.
         '''
+        if log is None:
+            from yaff.log import log
+        self.log=log
         if len(numbers.shape) != 1:
             raise ValueError('Argument numbers must be a one-dimensional array.')
         if pos.shape != (len(numbers), 3):
@@ -163,26 +168,26 @@ class System(object):
         self.dipoles = dipoles
         self.radii2 = radii2
         self.masses = masses
-        with log.section('SYS'):
+        with self.log.section('SYS'):
             # report some stuff
             self._init_log()
             # compute some derived attributes
             self._init_derived()
 
     def _init_log(self):
-        if log.do_medium:
-            log('Unit cell')
-            log.hline()
-            log('Number of periodic dimensions: %i' % self.cell.nvec)
+        if self.log.do_medium:
+            self.log('Unit cell')
+            self.log.hline()
+            self.log('Number of periodic dimensions: %i' % self.cell.nvec)
             lengths, angles = self.cell.parameters
             names = 'abc'
             for i in range(len(lengths)):
-                log('Cell parameter %5s: %10s' % (names[i], log.length(lengths[i])))
+                self.log('Cell parameter %5s: %10s' % (names[i], self.log.length(lengths[i])))
             names = 'alpha', 'beta', 'gamma'
             for i in range(len(angles)):
-                log('Cell parameter %5s: %10s' % (names[i], log.angle(angles[i])))
-            log.hline()
-            log.blank()
+                self.log('Cell parameter %5s: %10s' % (names[i], self.log.angle(angles[i])))
+            self.log.hline()
+            self.log.blank()
 
     def _init_derived(self):
         if self.bonds is not None:
@@ -233,24 +238,24 @@ class System(object):
                         self.neighs4[i0].add(i4)
                         self.neighs4[i4].add(i0)
         # report some basic stuff on screen
-        if log.do_medium:
-            log('Analysis of the bonds:')
+        if self.log.do_medium:
+            self.log('Analysis of the bonds:')
             bond_types = {}
             for i0, i1 in self.bonds:
                 key = tuple(sorted([self.numbers[i0], self.numbers[i1]]))
                 bond_types[key] = bond_types.get(key, 0) + 1
-            log.hline()
-            log(' First   Second   Count')
+            self.log.hline()
+            self.log(' First   Second   Count')
             for (num0, num1), count in sorted(bond_types.items()):
-                log('%6i   %6i   %5i' % (num0, num1, count))
-            log.hline()
-            log.blank()
+                self.log('%6i   %6i   %5i' % (num0, num1, count))
+            self.log.hline()
+            self.log.blank()
 
-            log('Analysis of the neighbors:')
-            log.hline()
-            log('Number of first neighbors:  %6i' % (sum(len(n) for n in self.neighs1.values())//2))
-            log('Number of second neighbors: %6i' % (sum(len(n) for n in self.neighs2.values())//2))
-            log('Number of third neighbors:  %6i' % (sum(len(n) for n in self.neighs3.values())//2))
+            self.log('Analysis of the neighbors:')
+            self.log.hline()
+            self.log('Number of first neighbors:  %6i' % (sum(len(n) for n in self.neighs1.values())//2))
+            self.log('Number of second neighbors: %6i' % (sum(len(n) for n in self.neighs2.values())//2))
+            self.log('Number of third neighbors:  %6i' % (sum(len(n) for n in self.neighs3.values())//2))
             # Collect all types of 'environments' for each element. This is
             # useful to double check the bonds
             envs = {}
@@ -260,12 +265,12 @@ class System(object):
                 key = (num0, nnums)
                 envs[key] = envs.get(key, 0)+1
             # Print the environments on screen
-            log.hline()
-            log('Element   Neighboring elements   Count')
+            self.log.hline()
+            self.log('Element   Neighboring elements   Count')
             for (num0, nnums), count in sorted(envs.items()):
-                log('%7i   %20s   %5i' % (num0, ','.join(str(num1) for num1 in nnums), count))
-            log.hline()
-            log.blank()
+                self.log('%7i   %20s   %5i' % (num0, ','.join(str(num1) for num1 in nnums), count))
+            self.log.hline()
+            self.log.blank()
 
 
     def _init_derived_scopes(self):
@@ -289,15 +294,15 @@ class System(object):
         # check the range of the ids
         if self.scope_ids.min() != 0 or self.scope_ids.max() != len(self.scopes)-1:
             raise ValueError('The ffatype_ids have incorrect bounds.')
-        if log.do_medium:
-            log('The following scopes are present in the system:')
-            log.hline()
-            log('                 Scope   ID   Number of atoms')
-            log.hline()
+        if self.log.do_medium:
+            self.log('The following scopes are present in the system:')
+            self.log.hline()
+            self.log('                 Scope   ID   Number of atoms')
+            self.log.hline()
             for scope_id, scope in enumerate(self.scopes):
-                log('%22s  %3i       %3i' % (scope, scope_id, (self.scope_ids==scope_id).sum()))
-            log.hline()
-            log.blank()
+                self.log('%22s  %3i       %3i' % (scope, scope_id, (self.scope_ids==scope_id).sum()))
+            self.log.hline()
+            self.log.blank()
 
     def _init_derived_ffatypes(self):
         if self.ffatype_ids is None:
@@ -350,8 +355,8 @@ class System(object):
                         self.ffatypes.append(self.ffatypes[fid])
                         # Keep track of the new fid
                         fixed_fids[(sid, fid)] = new_fid
-                        if log.do_warning:
-                            log.warn('Atoms with type ID %i in scope %s were changed to type ID %i.' % (fid, self.scopes[sid], new_fid))
+                        if self.log.do_warning:
+                            self.log.warn('Atoms with type ID %i in scope %s were changed to type ID %i.' % (fid, self.scopes[sid], new_fid))
                     # Apply the new fid
                     self.ffatype_ids[i] = new_fid
                     self.ffatype_id_to_scope_id[new_fid] = sid
@@ -364,22 +369,22 @@ class System(object):
         if self.natom>0:
             if self.ffatype_ids.min() != 0 or self.ffatype_ids.max() != len(self.ffatypes)-1:
                 raise ValueError('The ffatype_ids have incorrect bounds.')
-        if log.do_medium:
-            log('The following atom types are present in the system:')
-            log.hline()
+        if self.log.do_medium:
+            self.log('The following atom types are present in the system:')
+            self.log.hline()
             if self.scopes is None:
-                log('             Atom type   ID   Number of atoms')
-                log.hline()
+                self.log('             Atom type   ID   Number of atoms')
+                self.log.hline()
                 for ffatype_id, ffatype in enumerate(self.ffatypes):
-                    log('%22s  %3i       %3i' % (ffatype, ffatype_id, (self.ffatype_ids==ffatype_id).sum()))
+                    self.log('%22s  %3i       %3i' % (ffatype, ffatype_id, (self.ffatype_ids==ffatype_id).sum()))
             else:
-                log('                 Scope              Atom type   ID   Number of atoms')
-                log.hline()
+                self.log('                 Scope              Atom type   ID   Number of atoms')
+                self.log.hline()
                 for ffatype_id, ffatype in enumerate(self.ffatypes):
                     scope = self.scopes[self.ffatype_id_to_scope_id[ffatype_id]]
-                    log('%22s %22s  %3i       %3i' % (scope, ffatype, ffatype_id, (self.ffatype_ids==ffatype_id).sum()))
-            log.hline()
-            log.blank()
+                    self.log('%22s %22s  %3i       %3i' % (scope, ffatype, ffatype_id, (self.ffatype_ids==ffatype_id).sum()))
+            self.log.hline()
+            self.log.blank()
 
     def _get_natom(self):
         """The number of atoms"""
@@ -403,7 +408,7 @@ class System(object):
     nbond = property(_get_nbond)
 
     @classmethod
-    def from_file(cls, *fns, **user_kwargs):
+    def from_file(cls, *fns,log=None, **user_kwargs):
         """Construct a new System instance from one or more files
 
            **Arguments:**
@@ -433,6 +438,8 @@ class System(object):
                 Internal text-based checkpoint format. It just contains a
                 dictionary with the constructor arguments.
         """
+        if log is None:
+            from yaff.log import log
         with log.section('SYS'):
             kwargs = {}
             for fn in fns:
@@ -459,16 +466,17 @@ class System(object):
                             kwargs.update({key: value})
                 elif fn.endswith('.h5'):
                     with h5.File(fn, 'r') as f:
-                        return cls.from_hdf5(f)
+                        return cls.from_hdf5(f,log=log)
                 else:
                     raise IOError('Can not read from file \'%s\'.' % fn)
+                kwargs['log']=log
                 if log.do_high:
                     log('Read system parameters from %s.' % fn)
             kwargs.update(user_kwargs)
         return cls(**kwargs)
 
     @classmethod
-    def from_hdf5(cls, f):
+    def from_hdf5(cls, f,log=None):
         '''Create a system from an HDF5 file/group containing a system group
 
            **Arguments:**
@@ -476,6 +484,9 @@ class System(object):
            f
                 An open h5.File object with a system group. The system group
                 must at least contain a numbers and pos dataset.
+           log 
+                A Screenlog object can be passed locally
+                if None, the global log is used
         '''
         sgrp = f['system']
         kwargs = {
@@ -489,6 +500,7 @@ class System(object):
         for key in 'scopes', 'ffatypes':
             if key in sgrp:
                 kwargs[key] = np.asarray(sgrp[key][:], 'U22')
+        kwargs['log']=log
         if log.do_high:
             log('Read system parameters from %s.' % f.filename)
         return cls(**kwargs)
@@ -553,9 +565,9 @@ class System(object):
             xyz_writer.dump(str(self), self.pos)
         else:
             raise NotImplementedError('The extension of %s does not correspond to any known format.' % fn)
-        if log.do_high:
-            with log.section('SYS'):
-                log('Wrote system to %s.' % fn)
+        if self.log.do_high:
+            with self.log.section('SYS'):
+                self.log('Wrote system to %s.' % fn)
 
     def to_hdf5(self, f):
         """Write the system to a HDF5 file.
@@ -672,11 +684,11 @@ class System(object):
            bond lengths. If the database does not contain a record for the given
            element pair, the threshold is based on the sum of covalent radii.
         """
-        with log.section('SYS'):
+        with self.log.section('SYS'):
             from molmod.bonds import bonds
             if self.bonds is not None:
-                if log.do_warning:
-                    log.warn('Overwriting existing bonds.')
+                if self.log.do_warning:
+                    self.log.warn('Overwriting existing bonds.')
             work = np.zeros((self.natom*(self.natom-1))//2, float)
             self.cell.compute_distances(work, self.pos)
             ishort = (work < bonds.max_length*1.01).nonzero()[0]
@@ -709,11 +721,11 @@ class System(object):
 
            If the system already has FF atom types, they will be overwritten.
         """
-        with log.section('SYS'):
+        with self.log.section('SYS'):
             # Give warning if needed
             if self.ffatypes is not None:
-                if log.do_warning:
-                    log.warn('Overwriting existing FF atom types.')
+                if self.log.do_warning:
+                    self.log.warn('Overwriting existing FF atom types.')
             # Compile all the rules
             my_rules = []
             for ffatype, rule in rules:
@@ -744,11 +756,11 @@ class System(object):
 
     def set_standard_masses(self):
         """Initialize the ``masses`` attribute based on the atomic numbers."""
-        with log.section('SYS'):
+        with self.log.section('SYS'):
             from molmod.periodic import periodic
             if self.masses is not None:
-                if log.do_warning:
-                    log.warn('Overwriting existing masses with default masses.')
+                if self.log.do_warning:
+                    self.log.warn('Overwriting existing masses with default masses.')
             self.masses = np.array([periodic[n].mass for n in self.numbers])
 
     def align_cell(self, lcs=None, swap=True):
@@ -838,7 +850,7 @@ class System(object):
         self.pos = pos
         self.cell = Cell(rvecs)
 
-    def supercell(self, *reps):
+    def supercell(self, *reps,log=None):
         """Return a supercell of the system.
 
            **Arguments:**
@@ -846,6 +858,9 @@ class System(object):
            reps
                 An array with repetitions, which must have the same number of
                 elements as the number of cell vectors.
+           log 
+                A Screenlog object can be passed locally
+                if None, the systems own log is used
 
            If this method is called with a non-periodic system, a TypeError is
            raised.
@@ -929,11 +944,15 @@ class System(object):
                     new_bonds[counter,1] = j1
                     counter += 1
             new_args['bonds'] = new_bonds
+            if log is None:
+                new_args['log']=self.log
+            else:
+                new_args['log']=log
 
         # Done
         return System(**new_args)
 
-    def remove_duplicate(self, threshold=0.1):
+    def remove_duplicate(self, threshold=0.1,log=None):
         '''Return a system object in which the duplicate atoms and bonds are removed.
 
            **Optional argument:**
@@ -941,6 +960,9 @@ class System(object):
            threshold
                 The minimum distance between two atoms that are supposed to be
                 different.
+           log 
+                A Screenlog object can be passed locally
+                if None, the systems log is used
 
            When it makes sense, properties of overlapping atoms are averaged
            out. In other cases, the atom with the lowest index in a cluster of
@@ -1043,12 +1065,13 @@ class System(object):
         else:
             bonds = set((oldnew[ia], oldnew[ib]) for ia, ib in self.bonds)
             bonds = np.array([bond for bond in bonds])
+        if log is None:
+            log=self.log
+        return self.__class__(numbers, pos, self.scopes, scope_ids, self.ffatypes, ffatype_ids, bonds, self.cell.rvecs, charges, radii, valence_charges, dipoles, radii2, masses,self.log)
 
-        return self.__class__(numbers, pos, self.scopes, scope_ids, self.ffatypes, ffatype_ids, bonds, self.cell.rvecs, charges, radii, valence_charges, dipoles, radii2, masses)
-
-    def subsystem(self, indexes):
+    def subsystem(self, indexes,log=None):
         '''Return a System instance in which only the given atom are retained.'''
-
+        
         def reduce_array(old):
             if old is None:
                 return None
@@ -1079,7 +1102,8 @@ class System(object):
                 if not (new0 is None or new1 is None):
                     new.append([new0, new1])
             return new
-
+        if log is None:
+            log=self.log
         return System(
             numbers=reduce_array(self.numbers),
             pos=reduce_array(self.pos),
@@ -1093,6 +1117,7 @@ class System(object):
             dipoles=reduce_array(self.dipoles),
             radii2=reduce_array(self.radii2),
             masses=reduce_array(self.masses),
+            log=log
         )
 
     def merge(self, system):
@@ -1139,6 +1164,7 @@ class System(object):
             dipoles=merge_arrays(self.dipoles, system.dipoles),
             radii2=merge_arrays(self.radii2, system.radii2),
             masses=merge_arrays(self.masses, system.masses),
+            log=self.log
         )
 
     def cut_bonds(self, indexes):
@@ -1202,8 +1228,8 @@ class System(object):
             """
             return (min(x - 1, 1) - min(y - 1, 1))**2
 
-        with log.section('SYS'):
-            log('Generating allowed indexes for renumbering.')
+        with self.log.section('SYS'):
+            self.log('Generating allowed indexes for renumbering.')
             # The allowed permutations is just based on the chemical elements, not the atom
             # types, which could also be useful.
             allowed = []
@@ -1220,11 +1246,11 @@ class System(object):
                 ffatype_ids1 = order[other.ffatype_ids]
                 for ffatype_id1 in ffatype_ids1:
                     allowed.append((ffatype_ids0 == ffatype_id1).nonzero()[0])
-            log('Building distance matrix for self.')
+            self.log('Building distance matrix for self.')
             dm0 = make_graph_distance_matrix(self)
-            log('Building distance matrix for other.')
+            self.log('Building distance matrix for other.')
             dm1 = make_graph_distance_matrix(other)
             # Yield the solutions
-            log('Generating renumberings.')
+            self.log('Generating renumberings.')
             for match in iter_matches(dm0, dm1, allowed, 1e-3, error_sq_fn, overlapping):
                 yield match

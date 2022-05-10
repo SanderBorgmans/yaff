@@ -40,9 +40,9 @@
 
 from __future__ import division
 
+import sys
 import numpy as np
 
-from yaff.log import log, timer
 from yaff.pes.ext import compute_ewald_reci, compute_ewald_reci_dd, \
     compute_ewald_corr, compute_ewald_corr_dd, compute_ewald_prefactors, \
     compute_ewald_structurefactors, compute_ewald_deltae, PairPotEI, \
@@ -51,14 +51,14 @@ from yaff.pes.dlist import DeltaList
 from yaff.pes.iclist import InternalCoordinateList
 from yaff.pes.vlist import ValenceList, ValenceTerm
 from yaff.pes.bias import BiasPotential
-
+from yaff.system import System
 
 __all__ = [
     'ForcePart', 'ForceField', 'ForcePartPair', 'ForcePartEwaldReciprocal',
     'ForcePartEwaldReciprocalDD', 'ForcePartEwaldCorrectionDD',
     'ForcePartEwaldCorrection', 'ForcePartEwaldNeutralizing',
     'ForcePartValence', 'ForcePartBias', 'ForcePartPressure', 'ForcePartGrid',
-    'ForcePartTailCorrection', 'ForcePartEwaldReciprocalInteraction',
+    'ForcePartTailCorrection', 'ForcePartEwaldReciprocalInteraction', 'ForcePartTIP4P','ForcePartQTIP4P'
 ]
 
 
@@ -66,7 +66,7 @@ class ForcePart(object):
     '''Base class for anything that can compute energies (and optionally gradient
        and virial) for a ``System`` object.
     '''
-    def __init__(self, name, system):
+    def __init__(self, name, system,log=None, timer=None):
         """
            **Arguments:**
 
@@ -78,6 +78,14 @@ class ForcePart(object):
 
            system
                 The system to which this part of the FF applies.
+          **Optional Arguments**
+           log
+                A Screenlog object can be passed locally
+                if None, the global log is used
+
+           timer
+                A TimerGroup object can be passed locally
+                if None, the global timer is used
         """
         self.name = name
         # backup copies of last call to compute:
@@ -85,6 +93,12 @@ class ForcePart(object):
         self.gpos = np.zeros((system.natom, 3), float)
         self.vtens = np.zeros((3, 3), float)
         self.clear()
+        if log is None:
+            from yaff.log import log
+        self.log=log
+        if timer is None:
+            from yaff.log import timer
+        self.timer=timer
 
     def clear(self):
         """Fill in nan values in the cached results to indicate that they have
@@ -174,7 +188,7 @@ class ForcePart(object):
 
 class ForceField(ForcePart):
     '''A complete force field model.'''
-    def __init__(self, system, parts, nlist=None):
+    def __init__(self, system, parts, nlist=None,log=None, timer=None):
         """
            **Arguments:**
 
@@ -191,20 +205,27 @@ class ForceField(ForcePart):
            nlist
                 A ``NeighborList`` instance. This is required if some items in the
                 parts list use this nlist object.
+           log
+                A Screenlog object can be passed locally
+                if None, the global log is used
+
+           timer
+                A TimerGroup object can be passed locally
+                if None, the global timer is used
         """
-        ForcePart.__init__(self, 'all', system)
+        ForcePart.__init__(self, 'all', system,log=log, timer=timer)
         self.system = system
         self.parts = []
         self.nlist = nlist
         self.needs_nlist_update = nlist is not None
         for part in parts:
             self.add_part(part)
-        if log.do_medium:
-            with log.section('FFINIT'):
-                log('Force field with %i parts:&%s.' % (
+        if self.log.do_medium:
+            with self.log.section('FFINIT'):
+                self.log('Force field with %i parts:&%s.' % (
                     len(self.parts), ', '.join(part.name for part in self.parts)
                 ))
-                log('Neighborlist present: %s' % (self.nlist is not None))
+                self.log('Neighborlist present: %s' % (self.nlist is not None))
 
     def add_part(self, part):
         self.parts.append(part)
@@ -215,7 +236,7 @@ class ForceField(ForcePart):
         self.__dict__[name] = part
 
     @classmethod
-    def generate(cls, system, parameters, **kwargs):
+    def generate(cls, system, parameters,log=None, timer=None, **kwargs):
         """Create a force field for the given system with the given parameters.
 
            **Arguments:**
@@ -237,6 +258,10 @@ class ForceField(ForcePart):
            with the default constructor. Parameters for atom types that are not
            present in the system, are simply ignored.
         """
+        if log is None:
+            from yaff.log import log
+        if timer is None:
+            from yaff.log import timer
         if system.ffatype_ids is None:
             raise ValueError('The generators needs ffatype_ids in the system object.')
         with log.section('GEN'), timer.section('Generator'):
@@ -246,9 +271,9 @@ class ForceField(ForcePart):
                 log('Generating force field from %s' % str(parameters))
             if not isinstance(parameters, Parameters):
                 parameters = Parameters.from_file(parameters)
-            ff_args = FFArgs(**kwargs)
+            ff_args = FFArgs(log=log,timer=timer,**kwargs)
             apply_generators(system, parameters, ff_args)
-            return ForceField(system, ff_args.parts, ff_args.nlist)
+            return ForceField(system, ff_args.parts, ff_args.nlist,log=log,timer=timer)
 
     def update_rvecs(self, rvecs):
         '''See :meth:`yaff.pes.ff.ForcePart.update_rvecs`'''
@@ -283,7 +308,7 @@ class ForcePartPair(ForcePart):
        Waals term. (This may be changed in future to improve the computational
        efficiency.)
     '''
-    def __init__(self, system, nlist, scalings, pair_pot):
+    def __init__(self, system, nlist, scalings, pair_pot, log=None, timer=None):
         '''
            **Arguments:**
 
@@ -303,28 +328,40 @@ class ForcePartPair(ForcePart):
            pair_pot
                 An instance of the ``PairPot`` built-in class from
                 :mod:`yaff.pes.ext`.
+           **Optional Arguments**
+           log
+                A Screenlog object can be passed locally
+                if None, the global log is used
+
+           timer
+                A TimerGroup object can be passed locally
+                if None, the global timer is used
         '''
-        ForcePart.__init__(self, 'pair_%s' % pair_pot.name, system)
+        ForcePart.__init__(self, 'pair_%s' % pair_pot.name, system, log=log, timer=timer)
         self.nlist = nlist
         self.scalings = scalings
         self.pair_pot = pair_pot
         self.nlist.request_rcut(pair_pot.rcut)
-        if log.do_medium:
-            with log.section('FPINIT'):
-                log('Force part: %s' % self.name)
-                log.hline()
-                log('  scalings:          %5.3f %5.3f %5.3f' % (scalings.scale1, scalings.scale2, scalings.scale3))
-                log('  real space cutoff: %s' % log.length(pair_pot.rcut))
+        if self.log.do_medium:
+            with self.log.section('FPINIT'):
+                self.log('Force part: %s' % self.name)
+                self.log.hline()
+                self.log('  scalings:          %5.3f %5.3f %5.3f' % (scalings.scale1, scalings.scale2, scalings.scale3))
+                self.log('  real space cutoff: %s' % self.log.length(pair_pot.rcut))
                 tr = pair_pot.get_truncation()
                 if tr is None:
-                    log('  truncation:     none')
+                    self.log('  truncation:     none')
                 else:
-                    log('  truncation:     %s' % tr.get_log())
-                self.pair_pot.log()
-                log.hline()
+                    try:
+                        self.log('  truncation:     %s' % tr.get_log(self.log))
+                    except TypeError:
+                        print(tr, type(tr))
+                        sys.exit(0)
+                self.pair_pot.get_log(self.log)
+                self.log.hline()
 
     def _internal_compute(self, gpos, vtens):
-        with timer.section('PP %s' % self.pair_pot.name):
+        with self.timer.section('PP %s' % self.pair_pot.name):
             return self.pair_pot.compute(self.nlist.neighs, self.scalings.stab, gpos, vtens, self.nlist.nneigh)
 
 
@@ -332,7 +369,7 @@ class ForcePartEwaldReciprocal(ForcePart):
     '''The long-range contribution to the electrostatic interaction in 3D
        periodic systems.
     '''
-    def __init__(self, system, alpha, gcut=0.35, dielectric=1.0, nlow=0, nhigh=-1):
+    def __init__(self, system, alpha, gcut=0.35, dielectric=1.0, nlow=0, nhigh=-1,log=None, timer=None):
         '''
            **Arguments:**
 
@@ -357,9 +394,16 @@ class ForcePartEwaldReciprocal(ForcePart):
 
            nhigh
                 Atom pairs are only included if at least one atom index is
-                smaller than nhigh. The default nhigh=-1 means no exclusion..
+                smaller than nhigh. The default nhigh=-1 means no exclusion.
+           log
+                A Screenlog object can be passed locally
+                if None, the global log is used
+
+           timer
+                A TimerGroup object can be passed locally
+                if None, the global timer is used
         '''
-        ForcePart.__init__(self, 'ewald_reci', system)
+        ForcePart.__init__(self, 'ewald_reci', system,log=log, timer=timer)
         if not system.cell.nvec == 3:
             raise TypeError('The system must have a 3D periodic cell.')
         if system.charges is None:
@@ -371,22 +415,22 @@ class ForcePartEwaldReciprocal(ForcePart):
         self.update_gmax()
         self.work = np.empty(system.natom*2)
         self.nlow, self.nhigh = check_nlow_nhigh(system, nlow, nhigh)
-        if log.do_medium:
-            with log.section('FPINIT'):
-                log('Force part: %s' % self.name)
-                log.hline()
-                log('  alpha:                 %s' % log.invlength(self.alpha))
-                log('  gcut:                  %s' % log.invlength(self.gcut))
-                log('  relative permittivity: %5.3f' % self.dielectric)
-                log.hline()
+        if self.log.do_medium:
+            with self.log.section('FPINIT'):
+                self.log('Force part: %s' % self.name)
+                self.log.hline()
+                self.log('  alpha:                 %s' % self.log.invlength(self.alpha))
+                self.log('  gcut:                  %s' % self.log.invlength(self.gcut))
+                self.log('  relative permittivity: %5.3f' % self.dielectric)
+                self.log.hline()
 
 
     def update_gmax(self):
         '''This routine must be called after the attribute self.gmax is modified.'''
         self.gmax = np.ceil(self.gcut/self.system.cell.gspacings-0.5).astype(int)
-        if log.do_debug:
-            with log.section('EWALD'):
-                log('gmax a,b,c   = %i,%i,%i' % tuple(self.gmax))
+        if self.log.do_debug:
+            with self.log.section('EWALD'):
+                self.log('gmax a,b,c   = %i,%i,%i' % tuple(self.gmax))
 
     def update_rvecs(self, rvecs):
         '''See :meth:`yaff.pes.ff.ForcePart.update_rvecs`'''
@@ -394,7 +438,7 @@ class ForcePartEwaldReciprocal(ForcePart):
         self.update_gmax()
 
     def _internal_compute(self, gpos, vtens):
-        with timer.section('Ewald reci.'):
+        with self.timer.section('Ewald reci.'):
             return compute_ewald_reci(
                 self.system.pos, self.system.charges, self.system.cell, self.alpha,
                 self.gmax, self.gcut, self.dielectric, gpos, self.work, vtens, self.nlow, self.nhigh
@@ -405,7 +449,7 @@ class ForcePartEwaldReciprocalDD(ForcePart):
     '''The long-range contribution to the dipole-dipole
        electrostatic interaction in 3D periodic systems.
     '''
-    def __init__(self, system, alpha, gcut=0.35, nlow=0, nhigh=-1):
+    def __init__(self, system, alpha, gcut=0.35, nlow=0, nhigh=-1,log=None, timer=None):
         '''
            **Arguments:**
 
@@ -426,8 +470,15 @@ class ForcePartEwaldReciprocalDD(ForcePart):
            nhigh
                 Atom pairs are only included if at least one atom index is
                 smaller than nhigh. The default nhigh=-1 means no exclusion.
+           log
+                A Screenlog object can be passed locally
+                if None, the global log is used
+
+           timer
+                A TimerGroup object can be passed locally
+                if None, the global timer is used
         '''
-        ForcePart.__init__(self, 'ewald_reci', system)
+        ForcePart.__init__(self, 'ewald_reci', system,log=log, timer=timer)
         if not system.cell.nvec == 3:
             raise TypeError('The system must have a 3D periodic cell.')
         if system.charges is None:
@@ -440,21 +491,21 @@ class ForcePartEwaldReciprocalDD(ForcePart):
         self.update_gmax()
         self.work = np.empty(system.natom*2)
         self.nlow, self.nhigh = check_nlow_nhigh(system, nlow, nhigh)
-        if log.do_medium:
-            with log.section('FPINIT'):
-                log('Force part: %s' % self.name)
-                log.hline()
-                log('  alpha:             %s' % log.invlength(self.alpha))
-                log('  gcut:              %s' % log.invlength(self.gcut))
-                log.hline()
+        if self.log.do_medium:
+            with self.log.section('FPINIT'):
+                self.log('Force part: %s' % self.name)
+                self.log.hline()
+                self.log('  alpha:             %s' % self.log.invlength(self.alpha))
+                self.log('  gcut:              %s' % self.log.invlength(self.gcut))
+                self.log.hline()
 
 
     def update_gmax(self):
         '''This routine must be called after the attribute self.gmax is modified.'''
         self.gmax = np.ceil(self.gcut/self.system.cell.gspacings-0.5).astype(int)
-        if log.do_debug:
-            with log.section('EWALD'):
-                log('gmax a,b,c   = %i,%i,%i' % tuple(self.gmax))
+        if self.log.do_debug:
+            with self.log.section('EWALD'):
+                self.log('gmax a,b,c   = %i,%i,%i' % tuple(self.gmax))
 
     def update_rvecs(self, rvecs):
         '''See :meth:`yaff.pes.ff.ForcePart.update_rvecs`'''
@@ -462,7 +513,7 @@ class ForcePartEwaldReciprocalDD(ForcePart):
         self.update_gmax()
 
     def _internal_compute(self, gpos, vtens):
-        with timer.section('Ewald reci.'):
+        with self.timer.section('Ewald reci.'):
             return compute_ewald_reci_dd(
                 self.system.pos, self.system.charges, self.system.dipoles, self.system.cell, self.alpha,
                 self.gmax, self.gcut, gpos, self.work, vtens, self.nlow, self.nhigh
@@ -475,7 +526,7 @@ class ForcePartEwaldCorrection(ForcePart):
        This correction is only needed if scaling rules apply to the short-range
        electrostatics.
     '''
-    def __init__(self, system, alpha, scalings, dielectric=1.0, nlow=0, nhigh=-1):
+    def __init__(self, system, alpha, scalings, dielectric=1.0, nlow=0, nhigh=-1,log=None, timer=None):
         '''
            **Arguments:**
 
@@ -504,8 +555,15 @@ class ForcePartEwaldCorrection(ForcePart):
            nhigh
                 Atom pairs are only included if at least one atom index is
                 smaller than nhigh. The default nhigh=-1 means no exclusion.
+           log
+                A Screenlog object can be passed locally
+                if None, the global log is used
+
+           timer
+                A TimerGroup object can be passed locally
+                if None, the global timer is used
         '''
-        ForcePart.__init__(self, 'ewald_cor', system)
+        ForcePart.__init__(self, 'ewald_cor', system,log=log, timer=timer)
         if not system.cell.nvec == 3:
             raise TypeError('The system must have a 3D periodic cell')
         if system.charges is None:
@@ -515,17 +573,17 @@ class ForcePartEwaldCorrection(ForcePart):
         self.dielectric = dielectric
         self.nlow, self.nhigh = check_nlow_nhigh(system, nlow, nhigh)
         self.scalings = scalings
-        if log.do_medium:
-            with log.section('FPINIT'):
-                log('Force part: %s' % self.name)
-                log.hline()
-                log('  alpha:             %s' % log.invlength(self.alpha))
-                log('  relative permittivity   %5.3f' % self.dielectric)
-                log('  scalings:          %5.3f %5.3f %5.3f' % (scalings.scale1, scalings.scale2, scalings.scale3))
-                log.hline()
+        if self.log.do_medium:
+            with self.log.section('FPINIT'):
+                self.log('Force part: %s' % self.name)
+                self.log.hline()
+                self.log('  alpha:             %s' % self.log.invlength(self.alpha))
+                self.log('  relative permittivity   %5.3f' % self.dielectric)
+                self.log('  scalings:          %5.3f %5.3f %5.3f' % (scalings.scale1, scalings.scale2, scalings.scale3))
+                self.log.hline()
 
     def _internal_compute(self, gpos, vtens):
-        with timer.section('Ewald corr.'):
+        with self.timer.section('Ewald corr.'):
             return compute_ewald_corr(
                 self.system.pos, self.system.charges, self.system.cell,
                 self.alpha, self.scalings.stab, self.dielectric, gpos, vtens, self.nlow, self.nhigh
@@ -538,7 +596,7 @@ class ForcePartEwaldCorrectionDD(ForcePart):
        This correction is only needed if scaling rules apply to the short-range
        electrostatics.
     '''
-    def __init__(self, system, alpha, scalings, nlow=0, nhigh=-1):
+    def __init__(self, system, alpha, scalings, nlow=0, nhigh=-1,log=None, timer=None):
         '''
            **Arguments:**
 
@@ -562,8 +620,15 @@ class ForcePartEwaldCorrectionDD(ForcePart):
            nhigh
                 Atom pairs are only included if at least one atom index is
                 smaller than nhigh. The default nhigh=-1 means no exclusion.
+           log
+                A Screenlog object can be passed locally
+                if None, the global log is used
+
+           timer
+                A TimerGroup object can be passed locally
+                if None, the global timer is used
         '''
-        ForcePart.__init__(self, 'ewald_cor', system)
+        ForcePart.__init__(self, 'ewald_cor', system,log=log, timer=timer)
         if not system.cell.nvec == 3:
             raise TypeError('The system must have a 3D periodic cell')
         if system.charges is None:
@@ -572,16 +637,16 @@ class ForcePartEwaldCorrectionDD(ForcePart):
         self.alpha = alpha
         self.nlow, self.nhigh = check_nlow_nhigh(system, nlow, nhigh)
         self.scalings = scalings
-        if log.do_medium:
-            with log.section('FPINIT'):
-                log('Force part: %s' % self.name)
-                log.hline()
-                log('  alpha:             %s' % log.invlength(self.alpha))
-                log('  scalings:          %5.3f %5.3f %5.3f' % (scalings.scale1, scalings.scale2, scalings.scale3))
-                log.hline()
+        if self.log.do_medium:
+            with self.log.section('FPINIT'):
+                self.log('Force part: %s' % self.name)
+                self.log.hline()
+                self.log('  alpha:             %s' % self.log.invlength(self.alpha))
+                self.log('  scalings:          %5.3f %5.3f %5.3f' % (scalings.scale1, scalings.scale2, scalings.scale3))
+                self.log.hline()
 
     def _internal_compute(self, gpos, vtens):
-        with timer.section('Ewald corr.'):
+        with self.timer.section('Ewald corr.'):
             return compute_ewald_corr_dd(
                 self.system.pos, self.system.charges, self.system.dipoles, self.system.cell,
                 self.alpha, self.scalings.stab, gpos, vtens, self.nlow, self.nhigh
@@ -594,7 +659,7 @@ class ForcePartEwaldNeutralizing(ForcePart):
        This term is only required of the system is not neutral.
     '''
     def __init__(self, system, alpha, dielectric=1.0, nlow=0, nhigh=-1,
-                fluctuating_charges=False):
+                fluctuating_charges=False,log=None, timer=None):
         '''
            **Arguments:**
 
@@ -622,8 +687,15 @@ class ForcePartEwaldNeutralizing(ForcePart):
                 Boolean indicating whether charges (and radii) are allowed to
                 change during a simulation. If set to False, some factors can
                 be precomputed at the start of the simulation.
+           log
+                A Screenlog object can be passed locally
+                if None, the global log is used
+
+           timer
+                A TimerGroup object can be passed locally
+                if None, the global timer is used
         '''
-        ForcePart.__init__(self, 'ewald_neut', system)
+        ForcePart.__init__(self, 'ewald_neut', system,log=log, timer=timer)
         if not system.cell.nvec == 3:
             raise TypeError('The system must have a 3D periodic cell')
         if system.charges is None:
@@ -642,16 +714,16 @@ class ForcePartEwaldNeutralizing(ForcePart):
                 fac += self.system.charges[:self.nlow].sum()*np.sum( self.system.charges[:self.nlow]*self.system.radii[:self.nlow]**2)
                 fac += self.system.charges[self.nhigh:].sum()*np.sum( self.system.charges[self.nhigh:]*self.system.radii[self.nhigh:]**2)
             self.prefactor = fac*np.pi/(2.0*self.dielectric)
-        if log.do_medium:
-            with log.section('FPINIT'):
-                log('Force part: %s' % self.name)
-                log.hline()
-                log('  alpha:                   %s' % log.invlength(self.alpha))
-                log('  relative permittivity:   %5.3f' % self.dielectric)
-                log.hline()
+        if self.log.do_medium:
+            with self.log.section('FPINIT'):
+                self.log('Force part: %s' % self.name)
+                self.log.hline()
+                self.log('  alpha:                   %s' % self.log.invlength(self.alpha))
+                self.log('  relative permittivity:   %5.3f' % self.dielectric)
+                self.log.hline()
 
     def _internal_compute(self, gpos, vtens):
-        with timer.section('Ewald neut.'):
+        with self.timer.section('Ewald neut.'):
             if not self.fluctuating_charges:
                 fac = self.prefactor/self.system.cell.volume
             else:
@@ -707,7 +779,7 @@ class ForcePartValence(ForcePart):
        comes from the field of neural networks. More details can be found in the
        chapter, :ref:`dg_sec_backprop`.
     '''
-    def __init__(self, system, comlist=None):
+    def __init__(self, system, comlist=None,log=None, timer=None):
         '''
            Parameters
            ----------
@@ -718,16 +790,25 @@ class ForcePartValence(ForcePart):
                 An optional layer to derive centers of mass from the atomic positions.
                 These centers of mass are used as input for the first layer, the relative
                 vectors.
+           **Optional Parameters:**
+
+           log
+                A Screenlog object can be passed locally
+                if None, the global log is used
+
+           timer
+                A TimerGroup object can be passed locally
+                if None, the global timer is used
         '''
-        ForcePart.__init__(self, 'valence', system)
+        ForcePart.__init__(self, 'valence', system,log=log, timer=timer)
         self.comlist = comlist
         self.dlist = DeltaList(system if comlist is None else comlist)
         self.iclist = InternalCoordinateList(self.dlist)
         self.vlist = ValenceList(self.iclist)
-        if log.do_medium:
-            with log.section('FPINIT'):
-                log('Force part: %s' % self.name)
-                log.hline()
+        if self.log.do_medium:
+            with self.log.section('FPINIT'):
+                self.log('Force part: %s' % self.name)
+                self.log.hline()
 
     def add_term(self, term):
         '''Add a new term to the covalent force field.
@@ -741,13 +822,13 @@ class ForcePartValence(ForcePart):
            ``compute`` method, but with the current implementation of Yaff,
            energy terms can be added at any time. (This may change in future.)
         '''
-        if log.do_high:
-            with log.section('VTERM'):
-                log('%7i&%s %s' % (self.vlist.nv, term.get_log(), ' '.join(ic.get_log() for ic in term.ics)))
+        if self.log.do_high:
+            with self.log.section('VTERM'):
+                self.log('%7i&%s %s' % (self.vlist.nv, term.get_log(), ' '.join(ic.get_log() for ic in term.ics)))
         self.vlist.add_term(term)
 
     def _internal_compute(self, gpos, vtens):
-        with timer.section('Valence'):
+        with self.timer.section('Valence'):
             if self.comlist is not None:
                 self.comlist.forward()
             self.dlist.forward()
@@ -779,7 +860,7 @@ class ForcePartBias(ForcePart):
        volume, an instance of ``CollectiveVariable`` can be used together with
        an instance of the ``BiasPotential`` class.
     '''
-    def __init__(self, system, comlist=None):
+    def __init__(self, system, comlist=None,log=None, timer=None):
         '''
            **Arguments:**
 
@@ -792,12 +873,19 @@ class ForcePartBias(ForcePart):
                 An optional layer to derive centers of mass from the atomic positions.
                 These centers of mass are used as input for the first layer, the relative
                 vectors.
+           log
+                A Screenlog object can be passed locally
+                if None, the global log is used
+
+           timer
+                A TimerGroup object can be passed locally
+                if None, the global timer is used
         '''
-        ForcePart.__init__(self, 'bias', system)
+        ForcePart.__init__(self, 'bias', system,log=log, timer=timer)
         self.system = system
-        self.valence = ForcePartValence(system)
+        self.valence = ForcePartValence(system,log=log,timer=timer)
         if comlist is not None:
-            self.valence_com = ForcePartValence(system, comlist=comlist)
+            self.valence_com = ForcePartValence(system, comlist=comlist,log=log,timer=timer)
         else:
             self.valence_com = None
         self.terms = []
@@ -809,10 +897,10 @@ class ForcePartBias(ForcePart):
         # The following list facilitates looking up the terms after they have
         # been added
         self.term_lookup = []
-        if log.do_medium:
-            with log.section('FPINIT'):
-                log('Force part: %s' % self.name)
-                log.hline()
+        if self.log.do_medium:
+            with self.log.section('FPINIT'):
+                self.log('Force part: %s' % self.name)
+                self.log.hline()
 
     def add_term(self, term, use_comlist=False):
         '''Add a new term to the bias potential.
@@ -841,14 +929,14 @@ class ForcePartBias(ForcePart):
                 self.term_lookup.append( (1,self.valence.vlist.nv) )
                 # Add to the ValenceList
                 self.valence.vlist.add_term(term)
-            if log.do_high:
-                with log.section('BIAS'):
-                    log('%7i&%s %s' % (len(self.terms), term.get_log(), ' '.join(ic.get_log() for ic in term.ics)))
+            if self.log.do_high:
+                with self.log.section('BIAS'):
+                    self.log('%7i&%s %s' % (len(self.terms), term.get_log(), ' '.join(ic.get_log() for ic in term.ics)))
         elif isinstance(term, BiasPotential):
             self.term_lookup.append( (0,len(self.terms)))
-            if log.do_high:
-                with log.section('BIAS'):
-                    log('%7i&%s %s' % (len(self.terms), term.get_log(), ' '.join(cv.get_log() for cv in term.cvs)))
+            if self.log.do_high:
+                with self.log.section('BIAS'):
+                    self.log('%7i&%s %s' % (len(self.terms), term.get_log(), ' '.join(cv.get_log() for cv in term.cvs)))
         else:
             raise NotImplementedError
         self.terms.append(term)
@@ -896,7 +984,7 @@ class ForcePartBias(ForcePart):
             return np.asarray(cv_values)
 
     def _internal_compute(self, gpos, vtens):
-        with timer.section('Bias'):
+        with self.timer.section('Bias'):
             energy = 0.0
             # ValenceTerms
             energy += self.valence._internal_compute(gpos, vtens)
@@ -921,7 +1009,7 @@ class ForcePartBias(ForcePart):
 
 class ForcePartPressure(ForcePart):
     '''Applies a constant istropic pressure.'''
-    def __init__(self, system, pext):
+    def __init__(self, system, pext,log=None, timer=None):
         '''
            **Arguments:**
 
@@ -932,21 +1020,29 @@ class ForcePartPressure(ForcePart):
                 The external pressure. (Positive will shrink the system.) In
                 case of 2D-PBC, this is the surface tension. In case of 1D, this
                 is the linear strain.
+           **Optiona Arguments**
+           log
+                A Screenlog object can be passed locally
+                if None, the global log is used
+
+           timer
+                A TimerGroup object can be passed locally
+                if None, the global timer is used
 
            This force part is only applicable to systems that are periodic.
         '''
         if system.cell.nvec == 0:
             raise ValueError('The system must be periodic in order to apply a pressure')
-        ForcePart.__init__(self, 'press', system)
+        ForcePart.__init__(self, 'press', system,log=log, timer=timer)
         self.system = system
         self.pext = pext
-        if log.do_medium:
-            with log.section('FPINIT'):
-                log('Force part: %s' % self.name)
-                log.hline()
+        if self.log.do_medium:
+            with self.log.section('FPINIT'):
+                self.log('Force part: %s' % self.name)
+                self.log.hline()
 
     def _internal_compute(self, gpos, vtens):
-        with timer.section('Valence'):
+        with self.timer.section('Valence'):
             cell = self.system.cell
             if (vtens is not None):
                 rvecs = cell.rvecs
@@ -969,7 +1065,7 @@ class ForcePartPressure(ForcePart):
 
 class ForcePartGrid(ForcePart):
     '''Energies obtained by grid interpolation.'''
-    def __init__(self, system, grids):
+    def __init__(self, system, grids,log=None, timer=None):
         '''
            **Arguments:**
 
@@ -979,6 +1075,14 @@ class ForcePartGrid(ForcePart):
            grids
                 A dictionary with (ffatype, grid) items. Each grid must be a
                 three-dimensional array with energies.
+           **Optional Arguments**
+           log
+                A Screenlog object can be passed locally
+                if None, the global log is used
+
+           timer
+                A TimerGroup object can be passed locally
+                if None, the global timer is used
 
            This force part is only applicable to systems that are 3D periodic.
         '''
@@ -987,16 +1091,16 @@ class ForcePartGrid(ForcePart):
         for grid in grids.values():
             if grid.ndim != 3:
                 raise ValueError('The energy grids must be 3D numpy arrays.')
-        ForcePart.__init__(self, 'grid', system)
+        ForcePart.__init__(self, 'grid', system,log=log, timer=timer)
         self.system = system
         self.grids = grids
-        if log.do_medium:
-            with log.section('FPINIT'):
-                log('Force part: %s' % self.name)
-                log.hline()
+        if self.log.do_medium:
+            with self.log.section('FPINIT'):
+                self.log('Force part: %s' % self.name)
+                self.log.hline()
 
     def _internal_compute(self, gpos, vtens):
-        with timer.section('Grid'):
+        with self.timer.section('Grid'):
             if gpos is not None:
                 raise NotImplementedError('Cartesian gradients are not supported yet in ForcePartGrid')
             if vtens is not None:
@@ -1012,7 +1116,7 @@ class ForcePartGrid(ForcePart):
 class ForcePartTailCorrection(ForcePart):
     '''Corrections to energy and virial tensor to compensate for neglecting
     pair potentials at long range'''
-    def __init__(self, system, part_pair, nlow=0, nhigh=-1):
+    def __init__(self, system, part_pair, nlow=0, nhigh=-1,log=None, timer=None):
         '''
            **Arguments:**
 
@@ -1034,19 +1138,26 @@ class ForcePartTailCorrection(ForcePart):
            nhigh
                 Atom pairs are only included if at least one atom index is
                 smaller than nhigh. The default nhigh=-1 means no exclusion.
+           log
+                A Screenlog object can be passed locally
+                if None, the global log is used
+
+           timer
+                A TimerGroup object can be passed locally
+                if None, the global timer is used
         '''
         if system.cell.nvec != 3:
             raise ValueError('Tail corrections can only be applied to 3D periodic systems')
         if part_pair.name in ['pair_ei','pair_eidip']:
             raise ValueError('Tail corrections are divergent for %s'%part_pair.name)
-        super(ForcePartTailCorrection, self).__init__('tailcorr_%s'%(part_pair.name), system)
+        super(ForcePartTailCorrection, self).__init__('tailcorr_%s'%(part_pair.name), system,log=log, timer=timer)
         self.nlow, self.nhigh = check_nlow_nhigh(system, nlow, nhigh)
         self.ecorr, self.wcorr = part_pair.pair_pot.prepare_tailcorrections(system.natom, self.nlow, self.nhigh)
         self.system = system
-        if log.do_medium:
-            with log.section('FPINIT'):
-                log('Force part: %s' % self.name)
-                log.hline()
+        if self.log.do_medium:
+            with self.log.section('FPINIT'):
+                self.log('Force part: %s' % self.name)
+                self.log.hline()
 
     def _internal_compute(self, gpos, vtens):
         if vtens is not None:
@@ -1100,7 +1211,7 @@ class ForcePartEwaldReciprocalInteraction(ForcePart):
        rotations can be achieved by combining a deletion and an insertion.
        Note that flexible cells are NOT supported => TODO check this
     '''
-    def __init__(self, cell, alpha, gcut, pos=None, charges=None, dielectric=1.0):
+    def __init__(self, cell, alpha, gcut, pos=None, charges=None, dielectric=1.0,log=None, timer=None):
         '''
             **Arguments:**
 
@@ -1125,6 +1236,13 @@ class ForcePartEwaldReciprocalInteraction(ForcePart):
 
            dielectric
                 The scalar relative permittivity of the system.
+           log
+                A Screenlog object can be passed locally
+                if None, the global log is used
+
+           timer
+                A TimerGroup object can be passed locally
+                if None, the global timer is used
         '''
         # Dummy attributes to keep things consistent with ForcePart,
         # these are not actually used.
@@ -1141,26 +1259,32 @@ class ForcePartEwaldReciprocalInteraction(ForcePart):
         self.alpha = alpha
         self.gcut = gcut
         self.dielectric = dielectric
+        if log is None:
+            from yaff.log import log
+        self.log=log
+        if timer is None:
+            from yaff.log import timer
+        self.timer=timer
         self.initialize()
         # Compute the structure factors if an initial configuration is
         # provided.
         if pos is not None:
             assert charges is not None
             self.compute_structurefactors(pos, charges, self.cosfacs, self.sinfacs)
-        if log.do_medium:
-            with log.section('EWIINIT'):
-                log('Ewald Reciprocal interactions')
-                log.hline()
-                log('  alpha:             %s' % log.invlength(self.alpha))
-                log('  gcut:              %s' % log.invlength(self.gcut))
-                log.hline()
+        if self.log.do_medium:
+            with self.log.section('EWIINIT'):
+                self.log('Ewald Reciprocal interactions')
+                self.log.hline()
+                self.log('  alpha:             %s' % self.log.invlength(self.alpha))
+                self.log('  gcut:              %s' % self.log.invlength(self.gcut))
+                self.log.hline()
 
     def update_gmax(self):
         '''This routine must be called after the attribute self.gmax is modified.'''
         self.gmax = np.ceil(self.gcut/self.cell.gspacings-0.5).astype(int)
-        if log.do_debug:
-            with log.section('EWALDI'):
-                log('gmax a,b,c   = %i,%i,%i' % tuple(self.gmax))
+        if self.log.do_debug:
+            with self.log.section('EWALDI'):
+                self.log('gmax a,b,c   = %i,%i,%i' % tuple(self.gmax))
 
     def initialize(self):
         # Prepare the prefactors \frac{e^{-\frac{k^2}{4\alpha^2}}}{k^2}
@@ -1182,11 +1306,11 @@ class ForcePartEwaldReciprocalInteraction(ForcePart):
            for the given coordinates and charges. The resulting real part is
            ADDED to cosfacs, the resulting imaginary part is ADDED to sinfacs.
         '''
-        with timer.section('Ew.reci.SF'):
+        with self.timer.section('Ew.reci.SF'):
             if not np.all(self.cell.rvecs==self.rvecs0):
-                if log.do_medium:
-                    with log.section('EWALDI'):
-                        log('Cell change detected, reinitializing')
+                if self.log.do_medium:
+                    with self.log.section('EWALDI'):
+                        self.log('Cell change detected, reinitializing')
                 self.initialize()
             compute_ewald_structurefactors(pos, charges, self.cell, self.alpha,
                 self.gmax, self.gcut, cosfacs, sinfacs)
@@ -1195,7 +1319,7 @@ class ForcePartEwaldReciprocalInteraction(ForcePart):
         '''Compute the energy difference arising if the provided structure
            factors would be added to the current structure factors
         '''
-        with timer.section('Ew.reci.int.'):
+        with self.timer.section('Ew.reci.int.'):
             e = compute_ewald_deltae(self.prefactors, cosfacs, self.cosfacs,
                  sinfacs, self.sinfacs)
         return e/self.dielectric
@@ -1252,7 +1376,307 @@ class ForcePartEwaldReciprocalInteraction(ForcePart):
 
     def _internal_compute(self, gpos, vtens):
         return 0.0
+class ForcePartTIP4(ForcePart):
+    '''A force part that implicitly accounts for ghost atoms. Ghost atoms are extra atoms
+    in the water molecules to get a better correspondence for the electrostatic interactions
+    This part will containt other force parts which are used for the electrostatic interaction.
+    These parts use the system_ghost in their calculations, in this system the oxygen atoms are moved to
+    the site of the ghost atoms as these oxygen atoms exactly carry the properties of the ghost atoms and
+    for the electrostatic part, oxygen atoms themselves have no charge (this is how tip4p works)
+    These ghost do not play a role in sampling (verlet, optimization, ) but influence the energy.
+    The position of ghost atoms is based on geometric rules.'''
+    def __init__(self, system,d_om_rel=0.13194,log=None,timer=None):
+        """
+           **Arguments**
+           system
+                An instance of the ``System`` class.
 
+           d_om_rel
+               The distance between the ghost atom and the oxygen atom, this lies along the angle bisector of hôh
+           **Optional Arguments:**
+           log
+                A Screenlog object can be passed locally
+                if None, the global log is used
+
+           timer
+                A TimerGroup object can be passed locally
+                if None, the global timer is used
+        """
+
+        self.system=system
+        self.water_atom_indices=self.find_water_atoms()
+        self.nwater_atoms=len(self.water_atom_indices)
+        self._init_system_ghosts()
+        self.nlist=None
+        self.gpos_ghosts = np.zeros((self.system_ghosts.pos.shape[0], self.system_ghosts.pos.shape[1]))
+        self.vtens = np.zeros((3,3))
+        self.d_om_rel=d_om_rel
+        self.parts=[]
+        self.needs_nlist_update=False
+    def _init_system_ghosts(self):
+        """
+
+        initialises the system ghosts, which is initially just a copy of the system
+
+        """
+        def copy(old):
+            if old is None:
+                return None
+            else:
+                return np.copy(old)
+        self.system_ghosts=System(
+            numbers =  copy(self.system.numbers),
+            pos = copy(self.system.pos),
+            scopes=copy(self.system.scopes),
+            ffatypes=copy(self.system.ffatypes),
+            ffatype_ids=copy(self.system.ffatype_ids),
+            bonds=copy(self.system.bonds),
+            rvecs=copy(self.system.cell.rvecs),
+            charges=copy(self.system.charges),
+            radii=copy(self.system.radii),
+            valence_charges=copy(self.system.valence_charges),
+            dipoles=copy(self.system.dipoles),
+            radii2=copy(self.system.radii2),
+            masses=copy(self.system.masses),
+            log=self.log
+        )
+    def _update_system_ghosts(self):
+        '''
+        Updates the position of the all atoms in system ghosts based on the position of the system
+        also updates the rvecs.
+
+        '''
+        #Voorlopig update ik alleen pos en rvecs, voor ei is dit genoeg normaal? mss beter bonds ook?
+        self.system_ghosts.pos[:]=self.system.pos[:]
+        ghost_pos=self.find_ghost_pos()
+        self.system_ghosts.pos[self.water_atom_indices[:,0]]=ghost_pos
+        self.system_ghosts.cell.update_rvecs(self.system.cell.rvecs)
+    def add_part(self,part):
+        """
+        Add an electrostatic part to the forcepart
+        No electrostatic interactions should be calculated outside this forcepart
+        Parameters
+        ----------
+        part : an instance of a sublcass of ``ForcePart``
+            These subclasses need to be all electrostatic interactions
+        Raises
+        ------
+        ValueError
+            Every part needs to occur at most once.
+
+
+        """
+        self.parts.append(part)
+        # Make the parts also accessible as simple attributes.
+        name = 'part_%s' % part.name
+        if name in self.__dict__:
+            raise ValueError('The part %s occurs twice in the tip4p force part.' % name)
+        self.__dict__[name] = part
+    def find_ghost_pos(self):
+        raise NotImplementedError("use subclasses")
+    def write_ghost_gpos(self,gpos_ghosts, vtens_ghosts):
+        raise NotImplementedError("use subclasses")
+    def find_water_atoms(self):
+        """
+        Determines the indices of the water molecules
+
+        Returns
+        -------
+        water_atom_indices : [Nx3] NumPy array of ints
+            N is the number of water molecules
+            Every row of the array contains the indices of the water atoms, O, H and H respectively
+
+        """
+        O_indices=self.system.get_indexes( "8&=2%1")
+        water_atom_indices=np.zeros((len(O_indices),3),dtype=int)
+        for i,index in enumerate(O_indices):
+            water_atom_indices[i,0]+=index
+            H_indices=self.system.neighs1[index]
+            for j,H_index in enumerate(H_indices):
+                water_atom_indices[i,j+1]+=H_index
+        return water_atom_indices
+    def _internal_compute(self, gpos, vtens):
+        with self.timer.section('TIP4'):
+            #Write a way to only update in cases when it is necessary
+            self._update_system_ghosts()
+            self.nlist.update()
+            result = sum([part.compute(gpos, vtens) for part in self.parts])
+            if not ((gpos is None) and (vtens is None)):
+                if gpos is not None and np.isnan(gpos).any():
+                    raise ValueError('Some gpos element(s) is/are not-a-number (nan).')
+                if gpos is not None:
+                    self.write_ghost_gpos(gpos, vtens)
+            if (gpos is None) and (vtens is not None):
+                raise NotImplementedError("Cannot compute vtens without gpos")
+
+
+        return result
+class ForcePartTIP4P(ForcePartTIP4):
+    '''A force part that implicitly accounts for ghost atoms. Ghost atoms are extra atoms
+    in the water molecules to get a better correspondence for the electrostatic interactions
+    This part will containt other force parts which are used for the electrostatic interaction.
+    These parts use the system_ghost in their calculations, in this system the oxygen atoms are moved to
+    the site of the ghost atoms as these oxygen atoms exactly carry the properties of the ghost atoms and
+    for the electrostatic part, oxygen atoms themselves have no charge (this is how tip4p works)
+    These ghost do not play a role in sampling (verlet, optimization, ) but influence the energy.
+    The position of ghost atoms is based on geometric rules.'''
+    def __init__(self, system,d_om_rel=0.13194,log=None, timer=None):
+        """
+           **Arguments**
+           system
+                An instance of the ``System`` class.
+
+           d_om_rel
+               The distance between the ghost atom and the oxygen atom, this lies along the angle bisector of hôh
+           **Optional Arguments**
+           log
+                A Screenlog object can be passed locally
+                if None, the global log is used
+
+           timer
+                A TimerGroup object can be passed locally
+                if None, the global timer is used
+        """
+        ForcePart.__init__(self, 'Tip_4P', system,log=log, timer=timer)
+        ForcePartTIP4.__init__(self,system)
+        self.d_om_rel=d_om_rel
+        if self.log.do_medium:
+            with self.log.section('FPINIT'):
+                self.log('TIP4P Force part with %d ghost atoms and %d real atoms.' % (len(self.water_atom_indices), self.system.natom))
+
+    def find_ghost_pos(self):
+        '''
+        Find ghost site position of TIP4P water based on position of other atoms in molecule
+        Assumes that atoms are always order,d_om_rel=0.1319ed as O-H-H-M
+            r_M = r_O + d_OM^rel/2 * [ (1+d02/d01)*r01 + (1+d01/d02)*r02 ]
+        '''
+        ghosts_positions=[]
+        for water_molecule in self.water_atom_indices:
+            # Vector pointing from O to H1
+            r01 = self.system.pos[water_molecule[1]] - self.system.pos[water_molecule[0]]
+            self.system.cell.mic(r01)
+            d01 = np.linalg.norm(r01)
+            # Vector pointing from O to H2
+            r02 = self.system.pos[water_molecule[2]] - self.system.pos[water_molecule[0]]
+            self.system.cell.mic(r02)
+            d02 = np.linalg.norm(r02)
+            # Set M position
+            M=self.system.pos[water_molecule[0]] + 0.5*self.d_om_rel*((1.0+d02/d01)*r01 + (1.0+d01/d02)*r02)
+            self.system.cell.mic(M)
+            ghosts_positions.append(M)
+        return np.array(ghosts_positions)
+    def write_ghost_gpos(self,gpos_ghosts, vtens_ghosts):
+        """
+        Finds the gradients and the virial tensor of the system based on the gradients and virial tensor of the ghost system
+        then overwrites the arguments to represent the system
+        Parameters
+
+           gpos_ghosts
+                gpos of the ghost system
+           vtens_ghosts
+                vtens of the ghost system
+        """
+        for water_molecule in self.water_atom_indices:
+            # Vector pointing from O to H1
+            r01 = self.system.pos[water_molecule[1]] - self.system.pos[water_molecule[0]]
+            self.system.cell.mic(r01)
+            d01 = np.linalg.norm(r01)
+            # Vector pointing from O to H2
+            r02 = self.system.pos[water_molecule[2]] - self.system.pos[water_molecule[0]]
+            self.system.cell.mic(r02)
+            d02 = np.linalg.norm(r02)
+            # Partial derivatives of M positions
+            pdiff_01 = gpos_ghosts[water_molecule[0],:]*(1.0+d02/d01) - r01*np.dot(gpos_ghosts[water_molecule[0],:],(d02/d01/d01/d01*r01-r02/d01/d02))
+            pdiff_02 = gpos_ghosts[water_molecule[0],:]*(1.0+d01/d02) - r02*np.dot(gpos_ghosts[water_molecule[0],:],(d01/d02/d02/d02*r02-r01/d02/d01))
+            # Apply chain rule
+            if vtens_ghosts is not None:
+                r_mo = 0.5*self.d_om_rel*((1.0+d02/d01)*r01 + (1.0+d01/d02)*r02)
+                vtens_ghosts[:] -= np.outer(gpos_ghosts[water_molecule[0],:],r_mo)
+                vtens_ghosts[:] += np.outer(0.5*self.d_om_rel*pdiff_01,r01)
+                vtens_ghosts[:] += np.outer(0.5*self.d_om_rel*pdiff_02,r02)
+            gpos_ghosts[water_molecule[0],:] -= 0.5*self.d_om_rel*pdiff_01
+            gpos_ghosts[water_molecule[0],:] -= 0.5*self.d_om_rel*pdiff_02
+            gpos_ghosts[water_molecule[1],:] += 0.5*self.d_om_rel*pdiff_01
+            gpos_ghosts[water_molecule[2],:] += 0.5*self.d_om_rel*pdiff_02
+class ForcePartQTIP4P(ForcePartTIP4):
+    '''A force part that implicitly accounts for ghost atoms. Ghost atoms are extra atoms
+    in the water molecules to get a better correspondence for the electrostatic interactions
+    This part will containt other force parts which are used for the electrostatic interaction.
+    These parts use the system_ghost in their calculations, in this system the oxygen atoms are moved to
+    the site of the ghost atoms as these oxygen atoms exactly carry the properties of the ghost atoms and
+    for the electrostatic part, oxygen atoms themselves have no charge (this is how tip4p works)
+    These ghost do not play a role in sampling (verlet, optimization, ) but influence the energy.
+    The position of ghost atoms is based on geometric rules.'''
+    def __init__(self, system,gamma=0.73612,log=None, timer=None):
+        """
+           **Arguments**
+           system
+                An instance of the ``System`` class.
+
+           d_om_rel
+               The distance between the ghost atom and the oxygen atom, this lies along the angle bisector of hôh
+           **OPtional Arguments**
+           log
+                A Screenlog object can be passed locally
+                if None, the global log is used
+
+           timer
+                A TimerGroup object can be passed locally
+                if None, the global timer is used
+        """
+        ForcePart.__init__(self, 'Tip_4P', system,log=log, timer=timer)
+        ForcePartTIP4.__init__(self,system)
+        self.gamma=gamma
+        if self.log.do_medium:
+            with self.log.section('FPINIT'):
+                self.log('TIP4P Force part with %d ghost atoms and %d real atoms.' % (len(self.water_atom_indices), self.system.natom))
+
+    def find_ghost_pos(self):
+        '''
+        Find ghost site position of TIP4P water based on position of other atoms in molecule
+        Assumes that atoms are always order, as O-H-H-M
+            r_M = r_O + d_OM^rel/2 * [ (1+d02/d01)*r01 + (1+d01/d02)*r02 ]
+        '''
+        ghosts_positions=[]
+        for water_molecule in self.water_atom_indices:
+            # Vector pointing from O to H1
+            r01 = self.system.pos[water_molecule[1]] - self.system.pos[water_molecule[0]]
+            self.system.cell.mic(r01)
+            r02 = self.system.pos[water_molecule[2]] - self.system.pos[water_molecule[0]]
+            self.system.cell.mic(r02)
+            # Set M position
+            M=self.system.pos[water_molecule[0]] + 0.5*(1-self.gamma)*(r01 + r02)
+            self.system.cell.mic(M)
+            ghosts_positions.append(M)
+        return np.array(ghosts_positions)
+    def write_ghost_gpos(self,gpos_ghosts, vtens_ghosts):
+        """
+        Finds the gradients and the virial tensor of the system based on the gradients and virial tensor of the ghost system
+        then overwrites the arguments to represent the system
+        Parameters
+
+           gpos_ghosts
+                gpos of the ghost system
+           vtens_ghosts
+                vtens of the ghost system
+        """
+        for water_molecule in self.water_atom_indices:
+            # Vector pointing from O to H1
+            r01 = self.system.pos[water_molecule[1]] - self.system.pos[water_molecule[0]]
+            self.system.cell.mic(r01)
+            # Vector pointing from O to H2
+            r02 = self.system.pos[water_molecule[2]] - self.system.pos[water_molecule[0]]
+            self.system.cell.mic(r02)
+            # Partial derivatives of M positions
+
+            if vtens_ghosts is not None:
+                r_mo = 0.5*(1-self.gamma)*(r01 + r02)
+                vtens_ghosts[:] -= np.outer(gpos_ghosts[water_molecule[0],:],r_mo)
+                vtens_ghosts[:] += np.outer(0.5*(1-self.gamma)*gpos_ghosts[water_molecule[0],:],r01)
+                vtens_ghosts[:] += np.outer(0.5*(1-self.gamma)*gpos_ghosts[water_molecule[0],:],r02)
+            gpos_ghosts[water_molecule[1],:] += 0.5*(1-self.gamma)*gpos_ghosts[water_molecule[0],:]
+            gpos_ghosts[water_molecule[2],:] += 0.5*(1-self.gamma)*gpos_ghosts[water_molecule[0],:]
+            gpos_ghosts[water_molecule[0],:] *=self.gamma
 
 def check_nlow_nhigh(system, nlow, nhigh):
     if nlow < 0:

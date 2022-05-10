@@ -50,7 +50,6 @@ import numpy as np
 
 from molmod import boltzmann, femtosecond, angstrom, kelvin, bar
 
-from yaff.log import log, timer
 from yaff.pes.ff import ForceField, \
     ForcePartEwaldReciprocalInteraction
 from yaff.pes.ext import Cell
@@ -71,7 +70,7 @@ class MC(object):
     default_trials = {}
     default_state = []
 
-    def __init__(self, state):
+    def __init__(self, state,log=None,timer=None):
         """
             **Optional arguments:**
 
@@ -79,7 +78,20 @@ class MC(object):
                 A list with state items. State items are simple objects
                 that take or derive a property from the current state of the
                 MC algorithm.
+            log 
+                A Screenlog object can be passed locally
+                if None, the global log is used
+                
+            timer
+                A TimerGroup object can be passed locally
+                if None, the global timer is used
         """
+        if log is None:
+            from yaff.log import log
+        self.log=log
+        if timer is None:
+            from yaff.log import timer
+        self.timer=timer
         self.counter = 0
         if state is None:
             self.state_list = [state_item.copy() for state_item in self.default_state]
@@ -88,10 +100,11 @@ class MC(object):
             self.state_list += state
         self.state = dict((item.key, item) for item in self.state_list)
         self.call_hooks()
+        
 
     def call_hooks(self):
         # Initialize hooks
-        with timer.section('%s hooks' % self.log_name):
+        with self.timer.section('%s hooks' % self.log_name):
             state_updated = False
             for hook in self.hooks:
                 if hook.expects_call(self.counter):
@@ -137,12 +150,12 @@ class MC(object):
                 Automatically reject TrialMove if atoms are placed shorter
                 than this distance apart
         """
-        if log.do_warning:
-            log.warn("Currently, Yaff does not consider interactions of a guest molecule "
+        if self.log.do_warning:
+            self.log.warn("Currently, Yaff does not consider interactions of a guest molecule "
                      "with its periodic images in MC simulations. Make sure that you choose a system size "
                      "that is large compared to the guest dimensions, so it is indeed "
                      "acceptable to neglect these interactions.")
-        with log.section(self.log_name), timer.section(self.log_name):
+        with self.log.section(self.log_name), self.timer.section(self.log_name):
             # Initialization
             self.translation_stepsize = translation_stepsize
             self.volumechange_stepsize = volumechange_stepsize
@@ -238,7 +251,7 @@ class FixedNMC(MC):
     default_trials = {}
 
     def __init__(self, guest, ff, external_potential=None, eguest=0.0,
-        hooks=[], state=None):
+        hooks=[], state=None,log=None,timer=None):
         # Initialization
         self.guest = guest
         if guest.cell.nvec==0:
@@ -253,7 +266,7 @@ class FixedNMC(MC):
         self.current_configuration = self.ff.system
         self.N = self.ff.system.natom//self.guest.natom
         assert self.N*self.guest.natom==self.ff.system.natom
-        MC.__init__(self, state)
+        MC.__init__(self, state,log=log,timer=timer)
 
     def get_ff(self, nguests):
         assert nguests == self.N
@@ -275,7 +288,7 @@ class CanonicalMC(FixedNMC):
     ]
 
     def __init__(self, guest, ff, external_potential=None, eguest=0.0,
-        hooks=[], state=None):
+        hooks=[], state=None,log=None,timer=None):
         """
            **Arguments:**
 
@@ -310,11 +323,18 @@ class CanonicalMC(FixedNMC):
                 A list with state items. State items are simple objects
                 that take or derive a property from the current state of the
                 MC algorithm.
+            log 
+                A Screenlog object can be passed locally
+                if None, the global log is used
+                
+            timer
+                A TimerGroup object can be passed locally
+                if None, the global timer is used
         """
         self.set_conditions(T)
         super(CanonicalMC, self).__init__(guest, ff,
             external_potential=external_potential, eguest=0.0, hooks=hooks,
-            state=state)
+            state=state,log=log,timer=timer)
 
     def set_external_conditions(self, T):
         # External conditions
@@ -326,8 +346,8 @@ class CanonicalMC(FixedNMC):
     def log_header(self):
         return "%10s %10s" % ("E","<E>")
 
-    def log(self):
-        return '%s %s' % (log.energy(self.energy), log.energy(self.emean))
+    def get_log(self):
+        return '%s %s' % (self.log.energy(self.energy), self.log.energy(self.emean))
 
 
 class NPTMC(FixedNMC):
@@ -347,7 +367,7 @@ class NPTMC(FixedNMC):
     ]
 
 
-    def __init__(self, guest, ff, ff_full, eguest=0.0, hooks=[], state=None):
+    def __init__(self, guest, ff, ff_full, eguest=0.0, hooks=[], state=None,log=None,timer=None):
         """
            **Arguments:**
 
@@ -375,10 +395,17 @@ class NPTMC(FixedNMC):
                 A list with state items. State items are simple objects
                 that take or derive a property from the current state of the
                 MC algorithm.
+           log 
+                A Screenlog object can be passed locally
+                if None, the global log is used
+                
+           timer
+                A TimerGroup object can be passed locally
+                if None, the global timer is used
         """
         self.ff_full = ff_full
         super(NPTMC, self).__init__(guest, ff,
-            external_potential=None, eguest=eguest, hooks=hooks, state=state)
+            external_potential=None, eguest=eguest, hooks=hooks, state=state,log=log,timer=timer)
         if self.ewald_reci is not None:
             raise ValueError("NPTMC simulations can not be performed when "
                              "ForcePartEwaldReciprocalInteraction is present")
@@ -403,9 +430,9 @@ class NPTMC(FixedNMC):
         return "%10s %10s %10s %10s" % ("V","<V>","E","<E>")
 
 
-    def log(self):
-        return '%s %s %s %s' % ( log.volume(self.current_configuration.cell.volume),
-                log.volume(self.Vmean), log.energy(self.energy), log.energy(self.emean))
+    def get_log(self):
+        return '%s %s %s %s' % ( self.log.volume(self.current_configuration.cell.volume),
+                self.log.volume(self.Vmean), self.log.energy(self.energy), self.log.energy(self.emean))
 
 
 class GCMC(MC):
@@ -426,7 +453,7 @@ class GCMC(MC):
     ]
 
     def __init__(self, guest, ff_generator, external_potential=None, eguest=0.0,
-                 hooks=[], nguests=10, state=None):
+                 hooks=[], nguests=10, state=None,log=None,timer=None):
         """
            **Arguments:**
 
@@ -470,6 +497,14 @@ class GCMC(MC):
                 A list with state items. State items are simple objects
                 that take or derive a property from the current state of the
                 MC algorithm.
+                
+            log 
+                A Screenlog object can be passed locally
+                if None, the global log is used
+                
+            timer
+                A TimerGroup object can be passed locally
+                if None, the global timer is used
         """
         # Initialization
         if guest.cell.nvec==0:
@@ -490,7 +525,7 @@ class GCMC(MC):
         self.Nmean = 0.0
         self.energy = 0.0
         self.emean = 0.0
-        MC.__init__(self, state)
+        MC.__init__(self, state,log=log,timer=timer)
 
     def set_external_conditions(self, T, fugacity):
         """
@@ -512,18 +547,18 @@ class GCMC(MC):
         assert fugacity>=0.0
         self.fugacity = fugacity
         self.conditions_set = True
-        if log.do_medium:
-            with log.section(self.log_name):
+        if self.log.do_medium:
+            with self.log.section(self.log_name):
                 # log.pressure does not exist yet, what a pity...
-                log("GCMC simulation with T = %s and fugacity = %12.6f bar"%(
-                    log.temperature(self.T), self.fugacity/bar))
+                self.log("GCMC simulation with T = %s and fugacity = %12.6f bar"%(
+                    self.log.temperature(self.T), self.fugacity/bar))
 
     def log_header(self):
         return "%10s %10s %10s %10s" % ("N","<N>","E","<E>")
 
-    def log(self):
+    def get_log(self):
         return '%10d %10.6f %s %s' % ( self.N, self.Nmean,
-                log.energy(self.energy), log.energy(self.emean))
+                self.log.energy(self.energy), self.log.energy(self.emean))
 
     def _generate_ffs(self, nguests):
         for iguest in range(len(self._ffs),nguests):
@@ -546,7 +581,7 @@ class GCMC(MC):
         return self._ffs[nguests]
 
     @classmethod
-    def from_files(cls, guest, parameters, **kwargs):
+    def from_files(cls, guest, parameters,log=None,timer=None, **kwargs):
         """Automated setup of GCMC simulation
 
            **Arguments:**
@@ -572,15 +607,27 @@ class GCMC(MC):
            host
                 Two types are accepted: (i) the filename of a system file
                 describing the host system, (ii) a System instance of the host
+                
+           log 
+                A Screenlog object can be passed locally
+                if None, the global log is used
+                
+           timer
+                A TimerGroup object can be passed locally
+                if None, the global timer is used
 
            All other keyword arguments are passed to the ForceField constructor
            See the constructor of the :class:`yaff.pes.generator.FFArgs` class
            for the available optional arguments.
 
         """
+        if log is None:
+            from yaff.log import log
+        if timer is None:
+            from yaff.log import timer
         # Load the guest System
         if isinstance(guest, str):
-            guest = System.from_file(guest)
+            guest = System.from_file(guest,log=log)
         assert isinstance(guest, System)
         # We want to control nlow and nhigh here ourselves, so remove it from the
         # optional arguments if the user provided it.
@@ -597,7 +644,7 @@ class GCMC(MC):
             kwargs['reci_ei'] = 'ewald_interaction'
         if host is not None:
             if isinstance(host, str):
-                host = System.from_file(host)
+                host = System.from_file(host,log=log)
             assert isinstance(host, System)
             # If the guest molecule is currently an isolated molecule, than put
             # it in the same periodic box as the host
@@ -607,7 +654,7 @@ class GCMC(MC):
             # force field excluding host-host interactions
             hostguest = host.merge(guest)
             external_potential = ForceField.generate(hostguest, parameters,
-                 nlow=host.natom, nhigh=host.natom, **kwargs)
+                 nlow=host.natom, nhigh=host.natom,log=log,timer=timer, **kwargs)
         else:
             external_potential = None
 #        # Compare the energy of the guest, once isolated, once in a periodic box
@@ -634,6 +681,6 @@ class GCMC(MC):
         # Generator of guest-guest force fields, excluding interactions
         # between the first N-1 guests
         def ff_generator(system, guest):
-            return ForceField.generate(system, parameters, nlow=max(0,system.natom-guest.natom), nhigh=max(0,system.natom-guest.natom), **kwargs)
+            return ForceField.generate(system, parameters, nlow=max(0,system.natom-guest.natom), nhigh=max(0,system.natom-guest.natom),log=log,timer=timer, **kwargs)
         return cls(guest, ff_generator, external_potential=external_potential,
-             eguest=eguest, hooks=hooks, nguests=nguests)
+             eguest=eguest, hooks=hooks, nguests=nguests,log=log,timer=timer)

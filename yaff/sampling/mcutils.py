@@ -31,7 +31,6 @@ import time
 
 from yaff.sampling.iterative import Hook, StateItem
 from yaff.system import System
-from yaff.log import log, timer
 
 
 __all__ = ['get_random_rotation_matrix', 'random_insertion',
@@ -109,17 +108,18 @@ class MCScreenLog(Hook):
         Hook.__init__(self, start, step)
         self.time0 = None
 
+
     def __call__(self, mc):
-        if log.do_medium:
+        if mc.log.do_medium:
             if self.time0 is None:
                 self.time0 = time.time()
-                if log.do_medium:
-                    log.hline()
-                    log('     counter %s   Walltime'%(mc.log_header()))
-                    log.hline()
-            log('%12i %s %10.1f' % (
+                if mc.log.do_medium:
+                    mc.log.hline()
+                    mc.log('     counter %s   Walltime'%(mc.log_header()))
+                    mc.log.hline()
+            mc.log('%12i %s %10.1f' % (
                 mc.counter,
-                mc.log(),
+                mc.get_log(),
                 time.time() - self.time0,
             ))
 

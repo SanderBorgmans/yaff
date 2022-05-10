@@ -32,13 +32,12 @@ from molmod.io import XYZReader, slice_match
 from yaff.conversion.common import get_trajectory_group, \
     get_trajectory_datasets, write_to_dataset, get_last_trajectory_row, \
     check_trajectory_rows
-from yaff.log import log
 
 
 __all__ = ['xyz_to_hdf5']
 
 
-def xyz_to_hdf5(f, fn_xyz, sub=slice(None), file_unit=angstrom, name='pos'):
+def xyz_to_hdf5(f, fn_xyz, sub=slice(None), file_unit=angstrom, name='pos',log=None):
     """Convert XYZ trajectory file to Yaff HDF5 format.
 
        **Arguments:**
@@ -62,12 +61,17 @@ def xyz_to_hdf5(f, fn_xyz, sub=slice(None), file_unit=angstrom, name='pos'):
        name
             The name of the HDF5 dataset where the trajectory is stored. This
             array is stored in the 'trajectory' group.
+       log 
+            A Screenlog object can be passed locally
+            if None, the global log is used
 
        This routine will also test the consistency of the row attribute of the
        trajectory group. If some trajectory data is already present, it will be
        replaced by the new data. It is highly recommended to first initialize
        the HDF5 file with the ``to_hdf5`` method of the System class.
     """
+    if log is None:
+            from yaff.log import log
     with log.section('XYZH5'):
         if log.do_medium:
             log('Loading XYZ file \'%s\' into \'trajectory/%s\' of HDF5 file \'%s\'' % (
@@ -88,10 +92,10 @@ def xyz_to_hdf5(f, fn_xyz, sub=slice(None), file_unit=angstrom, name='pos'):
             log.warn('The atomic numbers of the HDF5 and XYZ file do not match.')
 
         # Take care of the trajectory group
-        tgrp = get_trajectory_group(f)
+        tgrp = get_trajectory_group(f,log=log)
 
         # Take care of the dataset
-        ds, = get_trajectory_datasets(tgrp, (name, (len(xyz_reader.numbers), 3)))
+        ds, = get_trajectory_datasets(tgrp, (name, (len(xyz_reader.numbers), 3)),log=log)
 
         # Fill the dataset with data.
         row = get_last_trajectory_row([ds])

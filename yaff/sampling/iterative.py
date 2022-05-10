@@ -32,7 +32,6 @@ from molmod.units import *
 
 from yaff import *
 
-from yaff.log import log, timer
 from yaff.pes.ff import ForcePartValence, ForcePartPair
 from yaff.pes.ext import PairPotEI
 
@@ -49,7 +48,7 @@ class Iterative(object):
     default_state = []
     log_name = 'ITER'
 
-    def __init__(self, ff, state=None, hooks=None, counter0=0):
+    def __init__(self, ff, state=None, hooks=None, counter0=0,log=None,timer=None):
         """
            **Arguments:**
 
@@ -69,6 +68,14 @@ class Iterative(object):
 
            counter0
                 The counter value associated with the initial state.
+                
+            log 
+                A Screenlog object can be passed locally
+                if None, the log of ff is used
+                
+            timer
+                A TimerGroup object can be passed locally
+                if None, the  timer of ff is used
         """
         self.ff = ff
         if state is None:
@@ -87,7 +94,13 @@ class Iterative(object):
         self._add_default_hooks()
         self.counter0 = counter0
         self.counter = counter0
-        with log.section(self.log_name), timer.section(self.log_name):
+        if log is None:
+            log=ff.log
+        if timer is None:
+            timer=ff.timer
+        self.log=log
+        self.timer=timer
+        with self.log.section(self.log_name), self.timer.section(self.log_name):
             self.initialize()
 
         # Initialize restart hook if present
@@ -103,7 +116,7 @@ class Iterative(object):
         self.call_hooks()
 
     def call_hooks(self):
-        with timer.section('%s hooks' % self.log_name):
+        with self.timer.section('%s hooks' % self.log_name):
             state_updated = False
             from yaff.sampling.io import RestartWriter
             for hook in self.hooks:
@@ -118,7 +131,7 @@ class Iterative(object):
                     hook(self)
 
     def run(self, nstep=None):
-        with log.section(self.log_name), timer.section(self.log_name):
+        with self.log.section(self.log_name), self.timer.section(self.log_name):
             if nstep is None:
                 while True:
                     if self.propagate():

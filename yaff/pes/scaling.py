@@ -45,7 +45,6 @@ from __future__ import division
 
 import numpy as np
 
-from yaff.log import log
 from yaff.pes.ext import scaling_dtype
 
 
@@ -59,7 +58,7 @@ class Scalings(object):
     '''Describes the scaling of short-range pairwise interactions for atom pairs
        involved in covalent energy terms.
     '''
-    def __init__(self, system, scale1=0.0, scale2=0.0, scale3=1.0, scale4=1.0):
+    def __init__(self, system, scale1=0.0, scale2=0.0, scale3=1.0, scale4=1.0,log=None):
         '''
            **Arguments:**
 
@@ -68,7 +67,14 @@ class Scalings(object):
 
            scale1, scale2, scale3
                 The scaling of the 1-2. 1-3 and 1-4 pairs, respectively.
-        '''
+           log 
+                A Screenlog object can be passed locally
+                if None, the log of the system is used
+        '''        
+        if log is None:
+            log=system.log
+        self.log=log
+
         self.items = []
         if scale1 < -1 or scale1 > 1:
             raise ValueError('scale1 must be in the range [-1,1].')
@@ -124,7 +130,7 @@ class Scalings(object):
         if system.cell.nvec == 0:
             return
         troubles = False
-        with log.section('SCALING'):
+        with self.log.section('SCALING'):
             for i0, i1, scale, nbond in self.stab:
                 if nbond == 1:
                     continue
@@ -142,33 +148,92 @@ class Scalings(object):
                 all_deltas = np.array(all_deltas)
                 if abs(all_deltas.mean(axis=0) - all_deltas).max() > 1e-10:
                     troubles = True
-                    if log.do_warning:
-                        log.warn('Troublesome pair scaling detected.')
-                    log('The following bond paths connect the same pair of '
+                    if self.log.do_warning:
+                        self.log.warn('Troublesome pair scaling detected.')
+                    self.log('The following bond paths connect the same pair of '
                         'atoms, yet the relative vectors are different.')
                     for ipath in range(len(paths)):
-                        log('%2i %27s %10s %10s %10s' % (
+                        self.log('%2i %27s %10s %10s %10s' % (
                             ipath,
                             ','.join(str(index) for index in paths[ipath]),
-                            log.length(all_deltas[ipath,0]),
-                            log.length(all_deltas[ipath,1]),
-                            log.length(all_deltas[ipath,2]),
+                            self.log.length(all_deltas[ipath,0]),
+                            self.log.length(all_deltas[ipath,1]),
+                            self.log.length(all_deltas[ipath,2]),
                         ))
-                    log('Differences between relative vectors in fractional '
+                    self.log('Differences between relative vectors in fractional '
                         'coordinates:')
                     for ipath0 in range(1, len(paths)):
                         for ipath1 in range(ipath0):
                             diff = all_deltas[ipath0] - all_deltas[ipath1]
                             diff_frac = np.dot(system.cell.gvecs, diff)
-                            log('%2i %2i %10.4f %10.4f %10.4f' % (
+                            self.log('%2i %2i %10.4f %10.4f %10.4f' % (
                                 ipath0, ipath1,
                                 diff_frac[0], diff_frac[1], diff_frac[2]
                             ))
-                    log.blank()
+                    self.log.blank()
         if troubles:
             raise AssertionError('Due to the small spacing between some crystal planes, the scaling of non-bonding interactions will not work properly. Use a supercell to avoid this problem.')
 
+class ScalingsExcluding(Scalings):
+    def __init__(self, system, scale1=0.0, scale2=0.0, scale3=1.0, scale4=1.0,exceptions=[],log=None):
+        '''
+           This Class allows for exceptions to be made: pairs of elements for which the scale is 0
+           **Arguments:**
 
+           system
+                The system to which the scaling rules apply.
+
+           scale1, scale2, scale3
+                The scaling of the 1-2. 1-3 and 1-4 pairs, respectively.
+           exeptions
+               The pairs for which the scaling will be zero
+           log 
+                A Screenlog object can be passed locally
+                if None, the global log is used
+                
+           timer
+                A TimerGroup object can be passed locally
+                if None, the global timer is used
+        '''
+        self.items = []
+        if scale1 < -1 or scale1 > 1:
+            raise ValueError('scale1 must be in the range [-1,1].')
+        if scale2 < -1 or scale2 > 1:
+            raise ValueError('scale2 must be in the range [-1,1].')
+        if scale3 < -1 or scale3 > 1:
+            raise ValueError('scale3 must be in the range [-1,1].')
+        if scale4 < -1 or scale4 > 1:
+            raise ValueError('scale4 must be in the range [-1,1].')
+        self.scale1 = scale1
+        self.scale2 = scale2
+        self.scale3 = scale3
+        self.scale4 = scale4
+        stab = []
+        for i0 in range(system.natom):
+            if scale1 < 1.0:
+                for i1 in system.neighs1[i0]:
+                    if i0 > i1 and (i0,i1) not in exceptions:
+                        stab.append((i0, i1, scale1, 1))
+            if scale2 < 1.0:
+                for i2 in system.neighs2[i0]:
+                    if i0 > i2 and (i0,i2) not in exceptions:
+                        stab.append((i0, i2, scale2, 2))
+            if scale3 < 1.0:
+                for i3 in system.neighs3[i0]:
+                    if i0 > i3 and (i0,i3) not in exceptions:
+                        stab.append((i0, i3, scale3, 3))
+            if scale4 < 1.0:
+                for i4 in system.neighs4[i0]:
+                    if i0 > i4 and (i0,i4) not in exceptions:
+                        stab.append((i0, i4, scale4, 4))
+        for pair in exceptions:
+            stab.append((pair[0], pair[1], 0, 1))
+        stab.sort()
+        self.stab = np.array(stab, dtype=scaling_dtype)
+        self.check_mic(system)
+        if log is None:
+            from yaff.log import log
+        self.log=log
 def iter_paths(system, ib, ie, nbond):
     """Iterates over all paths between atoms ``ib`` and ``ie`` with the given
        number of bonds

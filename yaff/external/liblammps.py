@@ -36,7 +36,6 @@ import ctypes
 from molmod.units import pascal, angstrom, kjmol, kcalmol
 from molmod.constants import boltzmann
 
-from yaff.log import log, timer
 from yaff.external.lammpsio import *
 from yaff.pes import *
 from yaff.sampling.utils import cell_lower
@@ -48,7 +47,7 @@ class ForcePartLammps(ForcePart):
     def __init__(self, ff, fn_system, fn_log="none", suffix='',
                     do_table=True, fn_table='lammps.table', scalings_table=[0.0,0.0,1.0],
                     do_ei=True, kspace='ewald', kspace_accuracy=1e-7, scalings_ei=[0.0,0.0,1.0],
-                    triclinic=True, comm=None, move_central_cell=False):
+                    triclinic=True, comm=None, move_central_cell=False,log=None,timer=None):
         r'''Initalize LAMMPS ForcePart
 
            **Arguments:**
@@ -111,13 +110,26 @@ class ForcePartLammps(ForcePart):
                 Boolean, if True, every atom is moved to the central cell
                 (centered at the origin) before passing positions to LAMMPS.
                 Change this if LAMMPS gives a Atoms Lost ERROR.
+           log 
+                A Screenlog object can be passed locally
+                if None, the log of ff is used
+                
+           timer
+                A TimerGroup object can be passed locally
+                if None, the timer of ff is used
         '''
         self.system = ff.system
+        if log is None:
+            log=ff.log
+        if timer is None:
+            timer= ff.timer
+        #Initialize a class instance
+        ForcePart.__init__(self, 'lammps', self.system,log=log,timer=timer)
         # Try to load the lammps package, quit if not possible
         try:
             from lammps import lammps
         except:
-            log("Could not import the lammps python package which is required to use LAMMPS as a library")
+            self.log("Could not import the lammps python package which is required to use LAMMPS as a library")
             raise ImportError
         # Some safety checks...
         if self.system.cell.nvec != 3:
@@ -136,19 +148,18 @@ class ForcePartLammps(ForcePart):
                 if part.name=='pair_ei':
                     rcut = part.pair_pot.rcut
             if rcut==0:
-                log("ERROR, do_ei set to True, but pair_ei was not found in the ff")
+                self.log("ERROR, do_ei set to True, but pair_ei was not found in the ff")
         else: raise NotImplementedError
         if not kspace in ['ewald','pppm']:
             raise ValueError('kspace should be one of ewald or pppm')
-        if self.system.natom>2000 and kspace=='ewald' and log.do_warning:
-            log.warn("You are simulating a more or less large system."
+        if self.system.natom>2000 and kspace=='ewald' and self.log.do_warning:
+            self.log.warn("You are simulating a more or less large system."
                      "It might be more efficient to use kspace=pppm")
-        if self.system.natom<1000 and kspace=='pppm' and log.do_warning:
-            log.warn("You are simulating a more or less small system."
+        if self.system.natom<1000 and kspace=='pppm' and self.log.do_warning:
+            self.log.warn("You are simulating a more or less small system."
                      "It might be better to use kspace=ewald")
 
-        # Initialize a class instance and some attributes
-        ForcePart.__init__(self, 'lammps', self.system)
+        # initialize some attributes
         self.comm = comm
         self.triclinic = triclinic
         self.move_central_cell = move_central_cell
@@ -245,12 +256,12 @@ class ForcePartLammps(ForcePart):
                 (0.0,self.rvecs[0,0],0.0,self.rvecs[1,1], 0.0, self.rvecs[2,2]))
 
     def _internal_compute(self, gpos, vtens):
-        with timer.section("LAMMPS overhead"):
+        with self.timer.section("LAMMPS overhead"):
             self.update_rvecs(self.system.cell.rvecs)
             self.update_pos(self.system.pos.copy())
-        with timer.section("LAMMPS"):
+        with self.timer.section("LAMMPS"):
             self.lammps.command("run 0 post no")
-        with timer.section("LAMMPS overhead"):
+        with self.timer.section("LAMMPS overhead"):
             energy = self.lammps.extract_variable("eng",None,0)
             if gpos is not None:
                 f = self.lammps.gather_atoms("f",1,3)
@@ -276,7 +287,7 @@ class ForcePartLammps(ForcePart):
         return energy
 
 
-def swap_noncovalent_lammps(ff, **kwargs):
+def swap_noncovalent_lammps(ff,log=None,timer=None,**kwargs):
     r'''Take a YAFF ForceField instance and replace noncovalent interactions with
     a ForcePartLammps instance.
 
@@ -286,6 +297,13 @@ def swap_noncovalent_lammps(ff, **kwargs):
                 a YAFF ForceField instance
 
            **Optional arguments:**
+           log 
+                A Screenlog object can be passed locally
+                if None, the log of the ff is used
+                
+           timer
+                A TimerGroup object can be passed locally
+                if None, the timer of the ff is used
 
            fn_system
                 The filename to which the system data in LAMMPS format will be
@@ -311,6 +329,10 @@ def swap_noncovalent_lammps(ff, **kwargs):
                 :class:`yaff.external.liblammps.ForcePartLammps` class,
                 can be passed here as well.
     '''
+    if log is None:
+        log=ff.log
+    if timer is None:
+        timer=ff.timer
     # Some keyword arguments that should not be passed to the constructor of
     # ForcePartLammps
     overwrite_table = kwargs.pop("overwrite_table", False)
@@ -352,14 +374,14 @@ def swap_noncovalent_lammps(ff, **kwargs):
     if not os.path.isfile(fn_table) or overwrite_table:
         # Make sure that at most one process actually writes the table
         if comm is None or comm.Get_rank()==0:
-            ff_tabulate = ForceField(ff.system, parts_tabulated, nlist=ff.nlist)
-            write_lammps_table(ff_tabulate,fn=fn_table, nrows=nrows)
+            ff_tabulate = ForceField(ff.system, parts_tabulated, nlist=ff.nlist,log=log,timer=timer)
+            write_lammps_table(ff_tabulate,fn=fn_table, nrows=nrows,log=log)
         # Let all processes wait untill the table is completely written
         if comm is not None: comm.Barrier()
     # Write system data
     # Make sure that at most one process writes the data file
     if comm is None or comm.Get_rank()==0:
-        write_lammps_system_data(ff.system, ff=ff, fn=fn_system, triclinic=triclinic)
+        write_lammps_system_data(ff.system, ff=ff, fn=fn_system, triclinic=triclinic,log=log)
     # Let all processes wait untill the data file is completely written
     if comm is not None: comm.Barrier()
     # Adapt optional arguments
@@ -368,10 +390,10 @@ def swap_noncovalent_lammps(ff, **kwargs):
     kwargs["scalings_table"] = np.array(scaling_rules)
     kwargs["do_table"] = do_table
     # Get the ForcePartLammps, which will handle noncovalent interactions
-    part_lammps = ForcePartLammps(ff, fn_system, **kwargs)
+    part_lammps = ForcePartLammps(ff, fn_system,log=log,timer=timer,**kwargs)
     parts.append(part_lammps)
     # Potentially add additional parts which correct scaling rules
-    scaling_nlist = BondedNeighborList(ff.system,selected=[],add15=correct_15_rule)
+    scaling_nlist = BondedNeighborList(ff.system,selected=[],add15=correct_15_rule,log=log,timer=timer)
     nlist = None
     for part in ff.parts:
         if part.__class__==ForcePartPair:
@@ -385,11 +407,11 @@ def swap_noncovalent_lammps(ff, **kwargs):
                     pair_correction = PairPotEI(ff.system.charges, 0.0, rcut=part.pair_pot.rcut,
                         tr=part.pair_pot.get_truncation(), dielectric=part.pair_pot.dielectric,
                         radii=part.pair_pot.radii.copy())
-                    part_correction = ForcePartPair(ff.system, scaling_nlist, correction_scalings, pair_correction)
+                    part_correction = ForcePartPair(ff.system, scaling_nlist, correction_scalings, pair_correction,log=log,timer=timer)
                 else:
-                    part_correction = ForcePartPair(ff.system, scaling_nlist, correction_scalings, part.pair_pot)
+                    part_correction = ForcePartPair(ff.system, scaling_nlist, correction_scalings, part.pair_pot,log=log,timer=timer)
                 parts.append(part_correction)
                 nlist = scaling_nlist
     # Construct the new force field
-    ff_lammps = ForceField(ff.system, parts, nlist=nlist)
+    ff_lammps = ForceField(ff.system, parts, nlist=nlist,log=log,timer=timer)
     return ff_lammps

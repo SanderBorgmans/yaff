@@ -28,11 +28,11 @@ from __future__ import division
 
 import numpy as np
 
-from yaff.log import log
+
 from yaff.analysis.utils import get_slice
 from yaff.analysis.hook import AnalysisInput, AnalysisHook
 from yaff.pes.ext import Cell
-
+from yaff.log import log
 
 __all__ = ['RDF']
 

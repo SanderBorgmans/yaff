@@ -28,7 +28,6 @@ from __future__ import division
 import numpy as np
 
 from molmod.units import *
-from yaff.log import log
 
 from itertools import permutations
 
@@ -67,7 +66,7 @@ class Generator(object):
     suffixes = None
     allow_superposition = False
 
-    def __call__(self, system, parsec):
+    def __call__(self, system, parsec, log=None):
         '''Add contributions to the force field from this generator
 
            **Arguments:**
@@ -221,7 +220,7 @@ class ValenceGenerator(Generator):
     ICClass = None
     VClass = None
 
-    def __call__(self, system, parsec):
+    def __call__(self, system, parsec,log=None):
         '''Add contributions to the force field from a ValenceGenerator
 
            **Arguments:**
@@ -447,7 +446,7 @@ class ValenceCrossGenerator(Generator):
     VClass02 = None
     VClass12 = None
 
-    def __call__(self, system, parsec):
+    def __call__(self, system, parsec,log=None):
         '''Add contributions to the force field from a ValenceCrossGenerator
 
            **Arguments:**
@@ -613,7 +612,7 @@ class LJGenerator(NonbondedGenerator):
     suffixes = ['UNIT', 'SCALE', 'PARS']
     par_info = [('SIGMA', float), ('EPSILON', float)]
 
-    def __call__(self, system, parsec):
+    def __call__(self, system, parsec,log=None):
         self.check_suffixes(parsec)
         conversions = self.process_units(parsec['UNIT'])
         par_table = self.process_pars(parsec['PARS'], conversions, 1)
@@ -625,7 +624,7 @@ class MM3Generator(NonbondedGenerator):
     suffixes = ['UNIT', 'SCALE', 'PARS']
     par_info = [('SIGMA', float), ('EPSILON', float), ('ONLYPAULI', int)]
 
-    def __call__(self, system, parsec):
+    def __call__(self, system, parsec,log=None):
         self.check_suffixes(parsec)
         conversions = self.process_units(parsec['UNIT'])
         par_table = self.process_pars(parsec['PARS'], conversions, 1)
@@ -637,7 +636,10 @@ class FixedChargeGenerator(NonbondedGenerator):
     suffixes = ['UNIT', 'SCALE', 'ATOM', 'BOND', 'DIELECTRIC']
     par_info = [('Q0', float), ('P', float), ('R', float)]
 
-    def __call__(self, system, parsec):
+    def __call__(self, system, parsec,log=None):
+        if log is None:
+            from yaff.log import log
+        self.log=log
         self.check_suffixes(parsec)
         conversions = self.process_units(parsec['UNIT'])
         atom_table = self.process_atoms(parsec['ATOM'], conversions)
@@ -698,8 +700,8 @@ class FixedChargeGenerator(NonbondedGenerator):
     def apply(self, atom_table, bond_table, scale_table, dielectric, system):
         if system.charges is None:
             system.charges = np.zeros(system.natom)
-        elif log.do_warning and abs(system.charges).max() != 0:
-            log.warn('Overwriting charges in system.')
+        elif self.log.do_warning and abs(system.charges).max() != 0:
+            self.log.warn('Overwriting charges in system.')
         system.charges[:] = 0.0
         system.radii = np.zeros(system.natom)
 
@@ -710,8 +712,8 @@ class FixedChargeGenerator(NonbondedGenerator):
                 charge, radius = pars
                 system.charges[i] += charge
                 system.radii[i] = radius
-            elif log.do_warning:
-                log.warn('No charge defined for atom %i with fftype %s.' % (i, system.get_ffatype(i)))
+            elif self.log.do_warning:
+                self.log.warn('No charge defined for atom %i with fftype %s.' % (i, system.get_ffatype(i)))
         for i0, i1 in system.iter_bonds():
             ffatype0 = system.get_ffatype(i0)
             ffatype1 = system.get_ffatype(i1)
@@ -719,14 +721,14 @@ class FixedChargeGenerator(NonbondedGenerator):
                 continue
             charge_transfer = bond_table.get((ffatype0, ffatype1))
             if charge_transfer is None:
-                if log.do_warning:
-                    log.warn('No charge transfer parameter for atom pair (%i,%i) with fftype (%s,%s).' % (i0, i1, system.get_ffatype(i0), system.get_ffatype(i1)))
+                if self.log.do_warning:
+                    self.log.warn('No charge transfer parameter for atom pair (%i,%i) with fftype (%s,%s).' % (i0, i1, system.get_ffatype(i0), system.get_ffatype(i1)))
             else:
                 system.charges[i0] += charge_transfer
                 system.charges[i1] -= charge_transfer
 
 
-def apply_lammps_generators(system, parameters):
+def apply_lammps_generators(system, parameters, log=None):
     '''Populate the attributes of ff_args, prepares arguments for ForceField
 
        **Arguments:**
@@ -737,8 +739,12 @@ def apply_lammps_generators(system, parameters):
        parameters
             An instance of the Parameters, typically made by
             ``Parmaeters.from_file('parameters.txt')``.
+       log 
+            A Screenlog object can be passed locally
+            if None, the global log is used
     '''
-
+    if log is None:
+        from yaff.log import log
     # Collect all the generators that have a prefix.
     generators = {}
     for x in globals().values():
@@ -751,8 +757,9 @@ def apply_lammps_generators(system, parameters):
     for prefix, section in parameters.sections.items():
         generator = generators.get(prefix)
         if generator is None:
+
             if log.do_warning:
                 log.warn('There is no generator named %s. It will be ignored.' % prefix)
         else:
-            output[prefix] = generator(system, section)
+            output[prefix] = generator(system, section,log=log)
     return output

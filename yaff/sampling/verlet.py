@@ -33,7 +33,6 @@ from molmod import boltzmann, kjmol
 
 from math import factorial as fact
 
-from yaff.log import log, timer
 from yaff.sampling.iterative import Iterative, StateItem, AttributeStateItem, \
     PosStateItem, DipoleStateItem, DipoleVelStateItem, VolumeStateItem, \
     CellStateItem, EPotContribStateItem, Hook
@@ -83,7 +82,7 @@ class VerletIntegrator(Iterative):
     log_name = 'VERLET'
 
     def __init__(self, ff, timestep=None, state=None, hooks=None, vel0=None,
-                 temp0=300, scalevel0=True, time0=None, ndof=None, counter0=None, restart_h5=None):
+                 temp0=300, scalevel0=True, time0=None, ndof=None, counter0=None, restart_h5=None,log=None,timer=None):
         """
             **Arguments:**
 
@@ -133,14 +132,27 @@ class VerletIntegrator(Iterative):
 
             restart_h5
                 HDF5 object containing the restart information
+                
+            log 
+                A Screenlog object can be passed locally
+                if None, the log of ff is used
+                
+            timer
+                A TimerGroup object can be passed locally
+                if None, the  timer of ff is used
         """
         # Assign init arguments
+        if log is None:
+            log=ff.log
+        if timer is None:
+            timer=ff.timer
+        self.log=log
+        self.timer=timer
         if timestep is None and restart_h5 is None:
             raise AssertionError('No Verlet timestep is found')
         self.ndof = ndof
         self.hooks = hooks
         self.restart_h5 = restart_h5
-
         # Retrieve the necessary properties if restarting. Restart objects
         # are overwritten by optional arguments in VerletIntegrator
         if self.restart_h5 is None:
@@ -196,14 +208,14 @@ class VerletIntegrator(Iterative):
 
         # Tracks quality of the conserved quantity
         self._cons_err_tracker = ConsErrTracker(restart_h5)
-        Iterative.__init__(self, ff, state, self.hooks, counter0)
+        Iterative.__init__(self, ff, state, self.hooks, counter0,log=log,timer=timer)
 
     def _add_default_hooks(self):
         if not any(isinstance(hook, VerletScreenLog) for hook in self.hooks):
             self.hooks.append(VerletScreenLog())
 
     def _verify_hooks(self):
-        with log.section('ENSEM'):
+        with self.log.section('ENSEM'):
             thermo = None
             index_thermo = 0
             baro = None
@@ -227,8 +239,8 @@ class VerletIntegrator(Iterative):
             # If both are present, delete them and generate TBCombination element
             if thermo is not None and baro is not None:
                 from yaff.sampling.npt import TBCombination
-                if log.do_warning:
-                    log.warn('Both thermostat and barostat are present separately and will be merged')
+                if self.log.do_warning:
+                    self.log.warn('Both thermostat and barostat are present separately and will be merged')
                 del self.hooks[max(index_thermo, index_thermo)]
                 del self.hooks[min(index_thermo, index_baro)]
                 self.hooks.append(TBCombination(thermo, baro))
@@ -243,11 +255,11 @@ class VerletIntegrator(Iterative):
                     thermo = self.hooks.thermostat
                     baro = self.hooks.barostat
 
-            if log.do_warning:
+            if self.log.do_warning:
                 if thermo is not None:
-                    log('Temperature coupling achieved through ' + str(thermo.name) + ' thermostat')
+                    self.log('Temperature coupling achieved through ' + str(thermo.name) + ' thermostat')
                 if baro is not None:
-                    log('Pressure coupling achieved through ' + str(baro.name) + ' barostat')
+                    self.log('Pressure coupling achieved through ' + str(baro.name) + ' barostat')
 
     def _restart_add_hooks(self, restart_h5, ff):
         from yaff.sampling.nvt import BerendsenThermostat, NHCThermostat
@@ -393,8 +405,8 @@ class VerletIntegrator(Iterative):
             self.press = np.trace(self.ptens)/3
 
     def finalize(self):
-        if log.do_medium:
-            log.hline()
+        if self.log.do_medium:
+            self.log.hline()
 
     def call_verlet_hooks(self, kind):
         from yaff.sampling.npt import BerendsenBarostat, TBCombination
@@ -402,7 +414,7 @@ class VerletIntegrator(Iterative):
         # of the verlet hooks can rely on the specific implementation of the
         # VerletIntegrator and need not to rely on the generic state item
         # interface.
-        with timer.section('%s special hooks' % self.log_name):
+        with self.timer.section('%s special hooks' % self.log_name):
             for hook in self.hooks:
                 if isinstance(hook, VerletHook) and hook.expects_call(self.counter):
                     if kind == 'init':
@@ -453,22 +465,22 @@ class VerletScreenLog(Hook):
         self.time0 = None
 
     def __call__(self, iterative):
-        if log.do_medium:
+        if iterative.log.do_medium:
             if self.time0 is None:
                 self.time0 = time.time()
-                if log.do_medium:
-                    log.hline()
-                    log('Cons.Err. =&the root of the ratio of the variance on the conserved quantity and the variance on the kinetic energy.')
-                    log('d-rmsd    =&the root-mean-square displacement of the atoms.')
-                    log('g-rmsd    =&the root-mean-square gradient of the energy.')
-                    log('counter  Cons.Err.       Temp     d-RMSD     g-RMSD   Walltime')
-                    log.hline()
-            log('%7i %10.5f %s %s %s %10.1f' % (
+                if iterative.log.do_medium:
+                    iterative.log.hline()
+                    iterative.log('Cons.Err. =&the root of the ratio of the variance on the conserved quantity and the variance on the kinetic energy.')
+                    iterative.log('d-rmsd    =&the root-mean-square displacement of the atoms.')
+                    iterative.log('g-rmsd    =&the root-mean-square gradient of the energy.')
+                    iterative.log('counter  Cons.Err.       Temp     d-RMSD     g-RMSD   Walltime')
+                    iterative.log.hline()
+            iterative.log('%7i %10.5f %s %s %s %10.1f' % (
                 iterative.counter,
                 iterative.cons_err,
-                log.temperature(iterative.temp),
-                log.length(iterative.rmsd_delta),
-                log.force(iterative.rmsd_gpos),
+                iterative.log.temperature(iterative.temp),
+                iterative.log.length(iterative.rmsd_delta),
+                iterative.log.force(iterative.rmsd_gpos),
                 time.time() - self.time0,
             ))
 

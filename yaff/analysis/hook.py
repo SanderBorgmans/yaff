@@ -26,7 +26,6 @@
 
 from __future__ import division
 
-from yaff.log import log
 from yaff.sampling.iterative import Hook
 from yaff.analysis.utils import get_slice
 

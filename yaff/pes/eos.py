@@ -33,7 +33,6 @@ import pkg_resources
 from molmod import boltzmann, planck, amu, pascal, kelvin
 
 import yaff
-from yaff.log import log
 
 
 __all__ = [
@@ -233,7 +232,7 @@ class vdWEOS(EOS):
 
 class PREOS(EOS):
     """The Peng-Robinson equation of state"""
-    def __init__(self, Tc, Pc, omega, mass=0.0, phase="vapour"):
+    def __init__(self, Tc, Pc, omega, mass=0.0, phase="vapour",log=None):
         """
            The Peng-Robinson EOS gives a relation between pressure, volume, and
            temperature with parameters based on the critical pressure, critical
@@ -259,6 +258,9 @@ class PREOS(EOS):
            phase
                 Either "vapour" or "liquid". If both phases coexist at certain
                 conditions, properties for the selected phase will be reported.
+           log 
+                A Screenlog object can be passed locally
+                if None, the global log is used.
         """
         self.Tc = Tc
         self.Pc = Pc
@@ -269,9 +271,12 @@ class PREOS(EOS):
         self.a = 0.457235 * self.Tc**2 / self.Pc
         self.b = 0.0777961 * self.Tc / self.Pc
         self.kappa = 0.37464 + 1.54226 * self.omega - 0.26992 * self.omega**2
+        if log is None:
+            from yaff.log import log
+        self.log=log
 
     @classmethod
-    def from_name(cls, compound):
+    def from_name(cls, compound,log=None):
         """
            Initialize a Peng-Robinson EOS based on the name of the compound.
            Only works if the given compound name is included in
@@ -290,7 +295,7 @@ class PREOS(EOS):
         Tc = data['Tc'][index[0]]*kelvin
         Pc = data['Pc'][index[0]]*1e6*pascal
         omega = data['omega'][index[0]]
-        return cls(Tc, Pc, omega, mass=mass)
+        return cls(Tc, Pc, omega, mass=mass,log=log)
 
     def set_conditions(self, T, P):
         """
@@ -349,8 +354,8 @@ class PREOS(EOS):
             elif self.phase=='liquid':
                 Z = np.amin(solutions)
             else: raise NotImplementedError
-            if log.do_high:
-                log("Found 3 solutions for Z (%f,%f,%f), meaning that two "
+            if self.log.do_high:
+                self.log("Found 3 solutions for Z (%f,%f,%f), meaning that two "
                     "phases coexist. Returning Z=%f, corresponding to the "
                     "%s phase"%(x1,x2,x3,Z,self.phase))
         return Z

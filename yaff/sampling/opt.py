@@ -34,7 +34,6 @@ from scipy.linalg import eigh
 from molmod.minimizer import ConjugateGradient, QuasiNewton, NewtonLineSearch, \
     Minimizer
 
-from yaff.log import log
 from yaff.sampling.iterative import Iterative, AttributeStateItem, \
     PosStateItem, DipoleStateItem, VolumeStateItem, CellStateItem, \
     EPotContribStateItem, Hook
@@ -52,22 +51,22 @@ class OptScreenLog(Hook):
         self.time0 = None
 
     def __call__(self, iterative):
-        if log.do_medium:
+        if iterative.log.do_medium:
             if self.time0 is None:
                 self.time0 = time.time()
-                if log.do_medium:
-                    log.hline()
-                    log('Conv.val. =&the highest ratio of a convergence criterion over its threshold.')
-                    log('N         =&the number of convergence criteria that is not met.')
-                    log('Worst     =&the name of the convergence criterion that is worst.')
-                    log('counter  Conv.val.  N           Worst     Energy   Walltime')
-                    log.hline()
-            log('%7i % 10.3e %2i %15s %s %10.1f' % (
+                if iterative.log.do_medium:
+                    iterative.log.hline()
+                    iterative.log('Conv.val. =&the highest ratio of a convergence criterion over its threshold.')
+                    iterative.log('N         =&the number of convergence criteria that is not met.')
+                    iterative.log('Worst     =&the name of the convergence criterion that is worst.')
+                    iterative.log('counter  Conv.val.  N           Worst     Energy   Walltime')
+                    iterative.log.hline()
+            iterative.log('%7i % 10.3e %2i %15s %s %10.1f' % (
                 iterative.counter,
                 iterative.dof.conv_val,
                 iterative.dof.conv_count,
                 iterative.dof.conv_worst,
-                log.energy(iterative.epot),
+                iterative.log.energy(iterative.epot),
                 time.time() - self.time0,
             ))
 
@@ -84,7 +83,7 @@ class BaseOptimizer(Iterative):
     ]
     log_name = 'XXOPT'
 
-    def __init__(self, dof, state=None, hooks=None, counter0=0):
+    def __init__(self, dof, state=None, hooks=None, counter0=0,log=None,timer=None):
         """
            **Arguments:**
 
@@ -106,9 +105,17 @@ class BaseOptimizer(Iterative):
 
            counter0
                 The counter value associated with the initial state.
+
+           log
+                A Screenlog object can be passed locally
+                if None, the log of dof.ff is used
+
+           timer
+                A TimerGroup object can be passed locally
+                if None, the  timer of dof.ff is used
         """
         self.dof = dof
-        Iterative.__init__(self, dof.ff, state, hooks, counter0)
+        Iterative.__init__(self, dof.ff, state, hooks, counter0,log=log,timer=timer)
 
     def _add_default_hooks(self):
         if not any(isinstance(hook, OptScreenLog) for hook in self.hooks):
@@ -134,20 +141,20 @@ class BaseOptimizer(Iterative):
         return self.dof.converged
 
     def finalize(self):
-        if log.do_medium:
-            self.dof.log()
-            log.hline()
+        if self.log.do_medium:
+            self.dof.get_log(log=self.log)
+            self.log.hline()
 
 
 class CGOptimizer(BaseOptimizer):
     log_name = 'CGOPT'
 
-    def __init__(self, dof, state=None, hooks=None, counter0=0):
+    def __init__(self, dof, state=None, hooks=None, counter0=0,log=None,timer=None):
         self.minimizer = Minimizer(
             dof.x0, self.fun, ConjugateGradient(), NewtonLineSearch(), None,
             None, anagrad=True, verbose=False,
         )
-        BaseOptimizer.__init__(self, dof, state, hooks, counter0)
+        BaseOptimizer.__init__(self, dof, state, hooks, counter0,log=log,timer=timer)
 
     def initialize(self):
         self.minimizer.initialize()
@@ -157,14 +164,14 @@ class CGOptimizer(BaseOptimizer):
         success = self.minimizer.propagate()
         self.x = self.minimizer.x
         if success == False:
-            if log.do_warning:
-                log.warn('Line search failed in optimizer. Aborting optimization. This is probably due to a dicontinuity in the energy or the forces. Check the truncation of the non-bonding interactions and the Ewald summation parameters.')
+            if self.log.do_warning:
+                self.log.warn('Line search failed in optimizer. Aborting optimization. This is probably due to a dicontinuity in the energy or the forces. Check the truncation of the non-bonding interactions and the Ewald summation parameters.')
             return True
         return BaseOptimizer.propagate(self)
 
 
 class HessianModel(object):
-    def __init__(self, ndof, hessian0=None):
+    def __init__(self, ndof, hessian0=None,log=None):
         '''
            **Arguments:**
 
@@ -175,6 +182,10 @@ class HessianModel(object):
 
            hessian0
                 An initial guess for the hessian
+
+            log
+                A Screenlog object can be passed locally
+                if None, the global log is used
         '''
         self.ndof = ndof
         if hessian0 is None:
@@ -183,6 +194,9 @@ class HessianModel(object):
             self.hessian = hessian0.copy()
             if self.hessian.shape != (ndof, ndof):
                 raise TypeError('Incorrect shape of the initial hessian in quasi-newton method.')
+        if log is None:
+            from yaff.log import log
+        self.log=log
 
     def get_spectrum(self):
         return eigh(self.hessian)
@@ -195,16 +209,16 @@ class BFGSHessianModel(HessianModel):
         # Only compute updates if the denominators do not blow up
         denom1 = np.dot(dx, tmp)
         if hmax*denom1 <= 1e-5*abs(tmp).max()**2:
-            if log.do_high:
-                log('Skipping BFGS update because denom1=%10.3e is not positive enough.' % denom1)
+            if self.log.do_high:
+                self.log('Skipping BFGS update because denom1=%10.3e is not positive enough.' % denom1)
             return False
         denom2 = np.dot(dg, dx)
         if hmax*denom2 <= 1e-5*abs(dg).max()**2:
-            if log.do_high:
-                log('Skipping BFGS update because denom2=%10.3e is not positive enough.' % denom2)
+            if self.log.do_high:
+                self.log('Skipping BFGS update because denom2=%10.3e is not positive enough.' % denom2)
             return False
-        if log.do_debug:
-            log('Updating BFGS Hessian.    denom1=%10.3e   denom2=%10.3e' % (denom1, denom2))
+        if self.log.do_debug:
+            self.log('Updating BFGS Hessian.    denom1=%10.3e   denom2=%10.3e' % (denom1, denom2))
         self.hessian -= np.outer(tmp, tmp)/denom1
         self.hessian += np.outer(dg, dg)/denom2
         return True
@@ -216,13 +230,13 @@ class SR1HessianModel(HessianModel):
 
         denom = np.dot(tmp, dx)
         if abs(denom) > 1e-5*np.linalg.norm(dx)*np.linalg.norm(tmp):
-            if log.do_debug:
-                log('Updating SR1 Hessian.       denom=%10.3e' % denom)
+            if self.log.do_debug:
+                self.log('Updating SR1 Hessian.       denom=%10.3e' % denom)
             self.hessian += np.outer(tmp, tmp)/denom
             return True
         else:
-            if log.do_high:
-                log('Skipping SR1 update because denom=%10.3e is not big enough.' % denom)
+            if self.log.do_high:
+                self.log('Skipping SR1 update because denom=%10.3e is not big enough.' % denom)
             return False
 
 
@@ -264,7 +278,7 @@ class QNOptimizer(BaseOptimizer):
     """
     log_name = 'QNOPT'
 
-    def __init__(self, dof, state=None, hooks=None, counter0=0, trust_radius=1.0, small_radius=1e-5, too_small_radius=1e-10, hessian0=None):
+    def __init__(self, dof, state=None, hooks=None, counter0=0, trust_radius=1.0, small_radius=1e-5, too_small_radius=1e-10, hessian0=None,log=None,timer=None):
         """
            **Arguments:**
 
@@ -304,14 +318,22 @@ class QNOptimizer(BaseOptimizer):
 
            hessian0
                 An initial guess for the Hessian
+
+            log
+                A Screenlog object can be passed locally
+                if None, the log of dof.ff is used
+
+            timer
+                A TimerGroup object can be passed locally
+                if None, the  timer of dof.ff is used
         """
+        BaseOptimizer.__init__(self, dof, state, hooks, counter0,log=log,timer=timer)
         self.x_old = dof.x0
-        self.hessian = SR1HessianModel(len(dof.x0), hessian0)
+        self.hessian = SR1HessianModel(len(dof.x0), hessian0,log=log)
         self.trust_radius = trust_radius
         self.initial_trust_radius = trust_radius
         self.small_radius = small_radius
         self.too_small_radius = too_small_radius
-        BaseOptimizer.__init__(self, dof, state, hooks, counter0)
 
     def initialize(self):
         self.f_old, self.g_old = self.fun(self.dof.x0, True)
@@ -325,9 +347,9 @@ class QNOptimizer(BaseOptimizer):
         hessian_safe = self.hessian.update(self.x - self.x_old, self.g - self.g_old)
         if not hessian_safe:
             # Reset the Hessian completely
-            if log.do_high:
-                log('Resetting hessian due to failed update.')
-            self.hessian = SR1HessianModel(len(self.x))
+            if self.log.do_high:
+                self.log('Resetting hessian due to failed update.')
+            self.hessian = SR1HessianModel(len(self.x),log=self.log)
             self.trust_radius = self.initial_trust_radius
         # Move new to old
         self.x_old = self.x
@@ -340,9 +362,9 @@ class QNOptimizer(BaseOptimizer):
     def make_step(self):
         # get relevant hessian information
         evals, evecs = self.hessian.get_spectrum()
-        if log.do_high:
-            log(' lowest eigen value: %7.1e' % evals.min())
-            log('highest eigen value: %7.1e' % evals.max())
+        if self.log.do_high:
+            self.log(' lowest eigen value: %7.1e' % evals.min())
+            self.log('highest eigen value: %7.1e' % evals.max())
         # convert gradient to eigen basis
         grad_eigen = np.dot(evecs.T, self.g_old)
 
@@ -369,16 +391,16 @@ class QNOptimizer(BaseOptimizer):
 
             if delta_f > 0:
                 # The function must decrease, if not the trust radius is too big.
-                if log.do_high:
-                    log('Function increases.')
+                if self.log.do_high:
+                    self.log('Function increases.')
                 must_shrink = True
 
             if (self.trust_radius < self.small_radius and delta_norm_g > 0):
                 # When the trust radius becomes small, the numerical noise on
                 # the energy may be too large to detect an increase energy.
                 # In that case the norm of the gradient is used instead.
-                if log.do_high:
-                    log('Gradient norm increases.')
+                if self.log.do_high:
+                    self.log('Gradient norm increases.')
                 must_shrink = True
 
             if must_shrink:
@@ -389,8 +411,8 @@ class QNOptimizer(BaseOptimizer):
                     raise RuntimeError('The trust radius becomes too small. Is the potential energy surface smooth?')
             else:
                 # If we get here, we are done with the trust radius loop.
-                if log.do_high:
-                    log.hline()
+                if self.log.do_high:
+                    self.log.hline()
                 # It is fine to increase the trust radius a little after a
                 # successful step.
                 if self.trust_radius < self.initial_trust_radius:

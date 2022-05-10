@@ -29,14 +29,13 @@ from __future__ import division
 import numpy as np
 import h5py as h5
 
-from yaff.log import log
 
 
 __all__ = ['SumHills']
 
 
 class SumHills(object):
-    def __init__(self, grid):
+    def __init__(self, grid,log=None):
         """
            Computes a free energy profile by summing hills deposited during
            a metadyanmics simulation.
@@ -46,12 +45,19 @@ class SumHills(object):
            grid
                 A [N, n] NumPy array, where n is the number of collective
                 variables and N is the number of grid points
+           **Optional Arguments:**
+           log 
+                A Screenlog object can be passed locally
+                if None, the global log is used
         """
         if grid.ndim==1:
             grid = np.asarray([grid]).T
         self.grid = grid
         self.ncv = self.grid.shape[1]
         self.q0s = None
+        if log is None:
+            from yaff.log import log
+        self.log=log
 
     def compute_fes(self):
         if self.q0s is None:
@@ -92,9 +98,9 @@ class SumHills(object):
         self.tempering = tempering
         self.T = T
         self.periodicities = periodicities
-        if log.do_medium:
-            with log.section("SUMHILL"):
-                log("Found %d collective variables and %d Gaussian hills"%(self.ncv,self.q0s.shape[0]))
+        if self.log.do_medium:
+            with self.log.section("SUMHILL"):
+                self.log("Found %d collective variables and %d Gaussian hills"%(self.ncv,self.q0s.shape[0]))
 
     def load_hdf5(self, fn, T=None):
         """
@@ -119,8 +125,8 @@ class SumHills(object):
                             "should be specified or readable from the trajectory/temp "
                             "group in the HDF5 file")
                     T = np.mean(f['trajectory/temp'][:])
-                if log.do_medium:
-                    log("Well-tempered MTD run: T = %s deltaT = %s"%(log.temperature(T), log.temperature(tempering)))
+                if self.log.do_medium:
+                    self.log("Well-tempered MTD run: T = %s deltaT = %s"%(self.log.temperature(T), self.log.temperature(tempering)))
             if 'hills/periodicities' in f:
                 periodicities = f['hills/periodicities'][:]
             else:

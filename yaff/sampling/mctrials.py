@@ -28,7 +28,6 @@ from __future__ import division
 
 import numpy as np
 
-from yaff.log import log, timer
 from yaff.sampling.mcutils import *
 
 from molmod.units import kjmol
@@ -45,13 +44,15 @@ class Trial(object):
     """
     def __init__(self, mc):
         self.mc = mc
+        self.log=mc.log
+        self.timer=mc.timer
 
     def __call__(self):
         """Perform a trial move and calculate the associated energy difference,
         decide whether it is accepted or not, and update the state of the
         MC simulation accordingly
         """
-        with timer.section("MC %s move" % self.log_name):
+        with self.timer.section("MC %s move" % self.log_name):
             e = self.compute()
             p = self.probability(e)
             if np.random.rand()>p:
@@ -61,9 +62,9 @@ class Trial(object):
                 accepted = True
                 self.mc.energy += e
                 self.accept()
-        if log.do_debug:
-            log("MC %s: N = %d energy difference = %s acceptance probability = %6.2f %% accepted = %s"
-                % (self.__class__.__name__, self.mc.N, log.energy(e), p*100.0, accepted))
+        if self.log.do_debug:
+            self.log("MC %s: N = %d energy difference = %s acceptance probability = %6.2f %% accepted = %s"
+                % (self.__class__.__name__, self.mc.N, self.log.energy(e), p*100.0, accepted))
         return accepted
 
     def insertion_energy(self, ff, sign=1):

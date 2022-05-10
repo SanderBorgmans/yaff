@@ -32,12 +32,10 @@ from molmod.io import slice_match
 from yaff.conversion.common import get_trajectory_group, \
     get_trajectory_datasets, get_last_trajectory_row, write_to_dataset, \
     check_trajectory_rows
-from yaff.log import log
-
 __all__ = ['cp2k_ener_to_hdf5']
 
 
-def cp2k_ener_to_hdf5(f, fn_ener, sub=slice(None)):
+def cp2k_ener_to_hdf5(f, fn_ener, sub=slice(None),log=None):
     """Convert a CP2K energy trajectory file to Yaff HDF5 format.
 
        **Arguments:**
@@ -53,6 +51,9 @@ def cp2k_ener_to_hdf5(f, fn_ener, sub=slice(None)):
        sub
             This must be a slice object that defines the sub-sampling of the
             CP2K energy file. By default all time steps are read.
+       log 
+            A Screenlog object can be passed locally
+            if None, the global log is used
 
        This routine will also test the consistency of the row attribute of the
        trajectory group. If some trajectory data is already present, it will be
@@ -63,6 +64,8 @@ def cp2k_ener_to_hdf5(f, fn_ener, sub=slice(None)):
        It is highly recommended to first initialize the HDF5 file with the
        ``to_hdf5`` method of the System class.
     """
+    if log is None:
+            from yaff.log import log
     with log.section('CP2KEH5'):
         if log.do_medium:
             log('Loading CP2K energy file \'%s\' into \'trajectory\' of HDF5 file \'%s\'' % (
@@ -70,7 +73,7 @@ def cp2k_ener_to_hdf5(f, fn_ener, sub=slice(None)):
             ))
 
         # Take care of the data group
-        tgrp = get_trajectory_group(f)
+        tgrp = get_trajectory_group(f,log=log)
 
         # Take care of the datasets
         dss = get_trajectory_datasets(
@@ -81,6 +84,7 @@ def cp2k_ener_to_hdf5(f, fn_ener, sub=slice(None)):
             ('temp', (1,)),
             ('epot', (1,)),
             ('econs', (1,)),
+            log=log
         )
         ds_step, ds_time, ds_ke, ds_temp, ds_pe, ds_cq = dss
 

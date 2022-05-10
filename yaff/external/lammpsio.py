@@ -31,7 +31,6 @@ import os
 from scipy.special import erf
 
 from yaff.external.lammps_generator import apply_lammps_generators
-from yaff.log import log
 from yaff.pes import PairPotEI, ForcePartPair, Parameters, ForceField
 from yaff.sampling.utils import cell_lower
 
@@ -53,7 +52,7 @@ lammps_units = {
 }
 
 
-def write_lammps_system_data(system, ff=None, fn='lammps.data', triclinic=True):
+def write_lammps_system_data(system, ff=None, fn='lammps.data', triclinic=True,log=None):
     '''
         Write information about a Yaff system to a LAMMPS data file
         Following information is written: cell vectors, atom type ids
@@ -71,6 +70,10 @@ def write_lammps_system_data(system, ff=None, fn='lammps.data', triclinic=True):
                 the simulation. If the cell is orthogonal, set it to False
                 as LAMMPS should run slightly faster.
                 Default: True
+            
+            log 
+                A Screenlog object can be passed locally
+                if None, the log of system      is used
     '''
     if system.cell.nvec != 3:
         raise ValueError('The system must be 3D periodic for Lammps calculations.')
@@ -79,6 +82,8 @@ def write_lammps_system_data(system, ff=None, fn='lammps.data', triclinic=True):
     if system.bonds is None:
         raise ValueError('Bonds need to be defined')
     if system.charges is None:
+        if log is None:
+            log=system.log
         if log.do_warning:
             log.warn("System has no charges, writing zero charges to LAMMPS file")
         charges = np.zeros((system.natom,))
@@ -105,7 +110,7 @@ def write_lammps_system_data(system, ff=None, fn='lammps.data', triclinic=True):
     fdat.close()
 
 def write_lammps_table(ff, fn='lammps.table', rmin=0.50*angstrom,
-    nrows=2500, unit_style='electron'):
+    nrows=2500, unit_style='electron',log=None):
     '''
        Write tables containing noncovalent interactions for LAMMPS.
        For every pair of ffatypes, a separate table is generated.
@@ -133,8 +138,13 @@ def write_lammps_table(ff, fn='lammps.table', rmin=0.50*angstrom,
 
        fn
             Filename where tables will be stored
+       log 
+            A Screenlog object can be passed locally
+            if None, the log of ff is used
 
     '''
+    if log is None:
+        log= ff.log
     # Find out if we are dealing with electrostatics from distributed charges
     corrections = []
     for part in ff.parts:
@@ -164,6 +174,7 @@ def write_lammps_table(ff, fn='lammps.table', rmin=0.50*angstrom,
     ffatypes, ffatype_ids = get_lammps_ffatypes(ff)
     # Select atom pairs for each pair of atom types
     ffa_pairs = []
+    
     for i in range(len(ffatypes)):
         index0 = np.where(ffatype_ids==i)[0][0]
         for j in range(i,len(ffatypes)):
@@ -177,6 +188,7 @@ def write_lammps_table(ff, fn='lammps.table', rmin=0.50*angstrom,
                     index1 = cand
                     break
             if index1==-1:
+                
                 log("ERROR constructing LAMMPS tables: there is no pair of atom types %s-%s which are not near neighbors"%(ffatypes[i],ffatypes[j]))
                 log("Consider using a supercell to fix this problem")
                 raise ValueError
@@ -305,7 +317,7 @@ def read_lammps_table(fn):
 def ff2lammps(system, parameter_fns, dn, triclinic=True,
               rcut=12.0*angstrom, switch=4.0*angstrom, smooth_ei=False,
               tailcorrections=True, mode='md', unit_style='electron',
-              tabulated=False):
+              tabulated=False,log=None):
     '''
     Convert a Yaff ForceField parameter file and accompanying System instance
     to LAMMPS input files. Not all potentials available in Yaff are
@@ -360,7 +372,12 @@ def ff2lammps(system, parameter_fns, dn, triclinic=True,
             Boolean; if True, the van der Waals interactions will be read from
             a lammps.table file, which can be generated with the
             ``write_lammps_table`` function.
+        log 
+            A Screenlog object can be passed locally
+            if None, the log of the system is used
     '''
+    if log is None:
+            log=system.log
     # Check some properties of the supplied system
     if system.cell.nvec != 3:
         raise ValueError('The system must be 3d periodic for Lammps calculations.')
@@ -369,6 +386,7 @@ def ff2lammps(system, parameter_fns, dn, triclinic=True,
     if system.bonds is None:
         raise ValueError('Bonds need to be defined')
     if system.masses is None:
+        
         if log.do_high:
             log("Setting standard masses")
         system.set_standard_masses()
@@ -381,14 +399,14 @@ def ff2lammps(system, parameter_fns, dn, triclinic=True,
     # Select the LAMMPS units
     units = lammps_units[unit_style]
     # Apply the parameters of the force field to the system
-    parameters = apply_lammps_generators(system, Parameters.from_file(parameter_fns))
+    parameters = apply_lammps_generators(system, Parameters.from_file(parameter_fns),log=log)
     if system.charges is None: charges = np.zeros((system.natom,))
     else: charges = system.charges
     if system.radii is None: radii = np.zeros((system.natom,))
     else: radii = system.radii
     # Use atom types compatible with tables
     if tabulated:
-        ff = ForceField.generate(system, parameter_fns)
+        ff = ForceField.generate(system, parameter_fns,log=log)
         ffatypes, ffatype_ids = get_lammps_ffatypes(ff)
     else:
         ffatypes, ffatype_ids = system.ffatypes, system.ffatype_ids

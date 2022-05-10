@@ -32,8 +32,6 @@ from molmod import amu, second, femtosecond
 from yaff.conversion.common import get_trajectory_group, \
     get_trajectory_datasets, write_to_dataset, get_last_trajectory_row, \
     check_trajectory_rows
-from yaff.log import log
-
 
 __all__ = ['g09log_to_hdf5']
 
@@ -147,7 +145,7 @@ def _iter_frames_g09(fn_g09):
                 return
 
 
-def g09log_to_hdf5(f, fn_log):
+def g09log_to_hdf5(f, fn_log,log=None):
     """Convert Gaussian09 BOMD log file to Yaff HDF5 format.
 
        **Arguments:**
@@ -157,7 +155,13 @@ def g09log_to_hdf5(f, fn_log):
 
        fn_log
             The name of the Gaussian log file.
+       **Optional Arguments:**
+       log 
+            A Screenlog object can be passed locally
+            if None, the global log is used
     """
+    if log is None:
+            from yaff.log import log
     with log.section('G09H5'):
         if log.do_medium:
             log('Loading Gaussian 09 file \'%s\' into \'trajectory\' of HDF5 file \'%s\'' % (
@@ -173,7 +177,7 @@ def g09log_to_hdf5(f, fn_log):
         natom = f['system/numbers'].shape[0]
 
         # Take care of the trajectory group
-        tgrp = get_trajectory_group(f)
+        tgrp = get_trajectory_group(f,log=log)
 
         # Take care of the pos and vel datasets
         dss = get_trajectory_datasets(tgrp,
@@ -185,6 +189,7 @@ def g09log_to_hdf5(f, fn_log):
             ('epot', (1,)),
             ('ekin', (1,)),
             ('etot', (1,)),
+            log=log
         )
         ds_pos, ds_vel, ds_frc, ds_time, ds_step, ds_epot, ds_ekin, ds_etot = dss
 
